@@ -1,0 +1,249 @@
+{
+  "message": "SUCCESS",
+  "shipment": {
+    "id": 1003,
+    "reference": null,
+    "booking_number": "OOLU4099552175",
+    "container_number": "OOCU4935001",
+    "container_count": 1,
+    "carrier": {
+      "scac": "OOLU",
+      "name": "OOCL"
+    },
+    "status": "DISCHARGED",
+    "route": {
+      "port_of_loading": {
+        "location": {
+          "code": "BRSSZ",
+          "name": "SANTOS",
+          "timezone": "America/Sao_Paulo",
+          "country": {
+            "code": "BR",
+            "name": "Brazil"
+          }
+        },
+        "date_of_loading": "2025-03-10T12:00:00-03:00",
+        "date_of_loading_initial": "2025-03-10T12:00:00-03:00"
+      },
+      "ts_count": 1,
+      "port_of_discharge": {
+        "location": {
+          "code": "CNSHA",
+          "name": "SHANGHAI",
+          "timezone": "Asia/Shanghai",
+          "country": {
+            "code": "CN",
+            "name": "China"
+          }
+        },
+        "date_of_discharge": "2025-04-24T12:00:00+08:00",
+        "date_of_discharge_initial": "2025-04-24T12:00:00+08:00",
+        "date_of_discharge_predicted": null
+      },
+      "transit_time": 45,
+      "transit_percentage": 100,
+      "co2_emission": null
+    },
+    "containers": [
+      {
+        "number": "OOCU4935001",
+        "status": "EMPTY_RETURN",
+        "size": 20,
+        "type": "HC",
+        "movements": [
+          {
+            "event": "EMSH",
+            "status": "ACT",
+            "location": {
+              "code": "BRSSZ",
+              "name": "SANTOS",
+              "timezone": "America/Sao_Paulo",
+              "country": {
+                "code": "BR",
+                "name": "Brazil"
+              }
+            },
+            "vessel": null,
+            "voyage": null,
+            "timestamp": "2025-03-06T12:00:00-03:00"
+          },
+          {
+            "event": "GTIN",
+            "status": "ACT",
+            "location": {
+              "code": "BRSSZ",
+              "name": "SANTOS",
+              "timezone": "America/Sao_Paulo",
+              "country": {
+                "code": "BR",
+                "name": "Brazil"
+              }
+            },
+            "vessel": null,
+            "voyage": null,
+            "timestamp": "2025-03-09T12:00:00-03:00"
+          },
+          {
+            "event": "LOAD",
+            "status": "ACT",
+            "location": {
+              "code": "BRSSZ",
+              "name": "SANTOS",
+              "timezone": "America/Sao_Paulo",
+              "country": {
+                "code": "BR",
+                "name": "Brazil"
+              }
+            },
+            "vessel": {
+              "name": "BF CARODA",
+              "imo": 9297618
+            },
+            "voyage": "EZJ5616",
+            "timestamp": "2025-03-10T12:00:00-03:00"
+          },
+          {
+            "event": "DEPA",
+            "status": "ACT",
+            "location": {
+              "code": "BRSSZ",
+              "name": "SANTOS",
+              "timezone": "America/Sao_Paulo",
+              "country": {
+                "code": "BR",
+                "name": "Brazil"
+              }
+            },
+            "vessel": {
+              "name": "BF CARODA",
+              "imo": 9297618
+            },
+            "voyage": "EZJ5616",
+            "timestamp": "2025-03-21T12:00:00-03:00"
+          },
+          {
+            "event": "ARRV",
+            "status": "ACT",
+            "location": {
+              "code": "MAPTM",
+              "name": "TANGER (TANGIER)",
+              "timezone": "Africa/Casablanca",
+              "country": {
+                "code": "MA",
+                "name": "Morocco"
+              }
+            },
+            "vessel": {
+              "name": "BF CARODA",
+              "imo": 9297618
+            },
+            "voyage": "EZJ5616",
+            "timestamp": "2025-03-23T12:00:00+00:00"
+          },
+          {
+            "event": "DEPA",
+            "status": "ACT",
+            "location": {
+              "code": "MAPTM",
+              "name": "TANGER (TANGIER)",
+              "timezone": "Africa/Casablanca",
+              "country": {
+                "code": "MA",
+                "name": "Morocco"
+              }
+            },
+            "vessel": {
+              "name": "MSC SILVER II",
+              "imo": 9225249
+            },
+            "voyage": "NDB8892",
+            "timestamp": "2025-04-22T12:00:00+01:00"
+          },
+          {
+            "event": "ARRV",
+            "status": "ACT",
+            "location": {
+              "code": "CNSHA",
+              "name": "SHANGHAI",
+              "timezone": "Asia/Shanghai",
+              "country": {
+                "code": "CN",
+                "name": "China"
+              }
+            },
+            "vessel": {
+              "name": "MSC SILVER II",
+              "imo": 9225249
+            },
+            "voyage": "NDB8892",
+            "timestamp": "2025-04-23T12:00:00+08:00"
+          },
+          {
+            "event": "DISC",
+            "status": "ACT",
+            "location": {
+              "code": "CNSHA",
+              "name": "SHANGHAI",
+              "timezone": "Asia/Shanghai",
+              "country": {
+                "code": "CN",
+                "name": "China"
+              }
+            },
+            "vessel": {
+              "name": "MSC SILVER II",
+              "imo": 9225249
+            },
+            "voyage": "NDB8892",
+            "timestamp": "2025-04-24T12:00:00+08:00"
+          },
+          {
+            "event": "GTOT",
+            "status": "ACT",
+            "location": {
+              "code": "CNSHA",
+              "name": "SHANGHAI",
+              "timezone": "Asia/Shanghai",
+              "country": {
+                "code": "CN",
+                "name": "China"
+              }
+            },
+            "vessel": null,
+            "voyage": null,
+            "timestamp": "2025-04-26T12:00:00+08:00"
+          },
+          {
+            "event": "EMRT",
+            "status": "ACT",
+            "location": {
+              "code": "CNSHA",
+              "name": "SHANGHAI",
+              "timezone": "Asia/Shanghai",
+              "country": {
+                "code": "CN",
+                "name": "China"
+              }
+            },
+            "vessel": null,
+            "voyage": null,
+            "timestamp": "2025-04-30T12:00:00+08:00"
+          }
+        ]
+      }
+    ],
+    "tokens": {
+      "map": "00000000-0000-0000-0000-000000000000"
+    },
+    "followers": [],
+    "tags": [],
+    "creator": {
+      "name": "John Doe",
+      "email": "john.doe@example.com"
+    },
+    "created_at": "2025-04-14 10:31:02",
+    "updated_at": "2025-04-14 10:31:02",
+    "checked_at": "2025-04-14 10:31:02",
+    "discarded_at": null
+  }
+}

@@ -1,0 +1,4 @@
+po_number,supplier_name,total_value,container_number,allocation_percentage
+PO-2026-001,Ardent Tyres France,12500.50,MSCU1234567,100
+PO-2026-002,Volta Pneus Italy,8400.00,MSCU1234567,50
+PO-2026-003,Kestrel Tyre Co.,4500.00,CMAU9876543,100

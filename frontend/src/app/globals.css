@@ -1,0 +1,83 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+/*
+ * Design tokens. Two families, both usable as ordinary Tailwind colours (`bg-navy-900`,
+ * `fill-viz-freight`, `text-ink-muted`):
+ *
+ * - `navy`: the brand's dark ground — the sidebar, the marketing dark bands. Slate stays the
+ *   working neutral of every screen; navy is slate pulled toward the logo's blue, so the two sit
+ *   next to each other without a seam.
+ * - `viz-*`: the only colours a chart may use. One colour per cost FAMILY (see
+ *   components/charts/families.ts), assigned by identity and never by rank, in an order that was
+ *   run through the dataviz palette validator on a white surface (adjacent CVD ΔE ≥ 9.1, normal
+ *   vision ΔE ≥ 19.6). Three of them sit under 3:1 against white, which is why every chart ships a
+ *   legend with the amounts and a table twin: colour never carries a value alone.
+ */
+@theme {
+  --color-navy-700: #1b2a4a;
+  --color-navy-800: #131f3a;
+  --color-navy-900: #0c1529;
+  --color-navy-950: #070d1c;
+
+  --color-viz-freight: #2a78d6;
+  --color-viz-port: #eb6834;
+  --color-viz-customs: #1baf7a;
+  --color-viz-delivery: #eda100;
+  --color-viz-dnd: #e87ba4;
+  --color-viz-other: #4a3aa7;
+  /* A cost that rose against one that fell: warm against cool, the two poles of a diverging pair. */
+  --color-viz-rise: #e34948;
+  --color-viz-fall: #2a78d6;
+  /* The purchase price is the base every fee is read against: a neutral, never a series hue. */
+  --color-viz-fob: #cbd5e1;
+  --color-viz-grid: #e2e8f0;
+  --color-viz-axis: #cbd5e1;
+  --color-viz-muted: #64748b;
+
+  --shadow-card: 0 1px 2px 0 rgb(15 23 42 / 0.04), 0 1px 1px -1px rgb(15 23 42 / 0.04);
+  --shadow-pop: 0 12px 32px -8px rgb(15 23 42 / 0.22), 0 2px 6px -2px rgb(15 23 42 / 0.12);
+
+  --animate-rise: rise 0.18s ease-out;
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(4px) scale(0.985);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+}
+
+body {
+  font-family: var(--font-sans);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Big standalone figures read loose with equal-width digits; tables and axes keep them. */
+.figure-proportional {
+  font-variant-numeric: proportional-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@page {
+  size: A4;
+  margin: 12mm 14mm;
+}
+@media print {
+  body { background: white; }
+}

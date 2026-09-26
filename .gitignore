@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Docker
+postgres_data/
+
+# Next.js
+.next/
+out/
+next-env.d.ts
+
+# Test / coverage
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+.vercel
+
+# Private invoices used locally for the reading bench: never committed.
+backend/tests/fixtures/invoices_real/

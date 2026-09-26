@@ -1,0 +1,82 @@
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: fs
+      POSTGRES_PASSWORD: fs
+      POSTGRES_DB: fs
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fs"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  migrate:
+    build: ./backend
+    command: alembic upgrade head
+    environment:
+      DATABASE_URL: postgresql+psycopg://fs:fs@db/fs
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build: ./backend
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      APP_ENV: dev
+      DATABASE_URL: postgresql+psycopg://fs:fs@db/fs
+      CORS_ORIGINS: '["http://localhost:3000"]'
+      # The X-Org-Id header stands in for a login locally. It needs this on top of a non-prod
+      # APP_ENV, so that losing APP_ENV in production does not open the door on its own.
+      ALLOW_DEV_PRINCIPAL: "true"
+      # The demo Odoo lives on host.docker.internal: a private address, refused unless said so.
+      ALLOW_PRIVATE_OUTBOUND: "true"
+      # Optional Clerk verification for local dev; values come from the repo-root .env (gitignored).
+      CLERK_ISSUER: ${CLERK_ISSUER:-}
+      CLERK_JWKS_URL: ${CLERK_JWKS_URL:-}
+      CLERK_AUTHORIZED_PARTIES: ${CLERK_AUTHORIZED_PARTIES:-[]}
+    volumes:
+      - ./backend:/app
+    ports:
+      - "127.0.0.1:8001:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  # Background jobs (invoice extraction, tracking polls, alerts, ERP sync). Same image and .env as the API.
+  # No HTTP server — disable the image HEALTHCHECK (it probes /healthz on the API port).
+  worker:
+    build: ./backend
+    command: python -m app.worker
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      APP_ENV: dev
+      DATABASE_URL: postgresql+psycopg://fs:fs@db/fs
+      ALLOW_DEV_PRINCIPAL: "true"
+      # The demo Odoo lives on host.docker.internal: a private address, refused unless said so.
+      ALLOW_PRIVATE_OUTBOUND: "true"
+      WORKER_CONCURRENCY: "2"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      disable: true
+    restart: unless-stopped
+
+volumes:
+  pgdata: {}

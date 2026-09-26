@@ -1,0 +1,248 @@
+{
+  "version": "17.0-20260908",
+  "orders": [
+    {
+      "id": 8,
+      "name": "P00008",
+      "partner_id": [
+        9,
+        "Wood Corner"
+      ],
+      "currency_id": [
+        1,
+        "USD"
+      ],
+      "date_order": "2026-09-04 10:47:02",
+      "state": "purchase",
+      "order_line": [
+        17,
+        18
+      ],
+      "company_id": [
+        1,
+        "YourCompany"
+      ]
+    },
+    {
+      "id": 9,
+      "name": "P00009",
+      "partner_id": [
+        11,
+        "Gemini Furniture"
+      ],
+      "currency_id": [
+        1,
+        "USD"
+      ],
+      "date_order": "2026-08-25 10:47:02",
+      "state": "purchase",
+      "order_line": [
+        19,
+        20
+      ],
+      "company_id": [
+        1,
+        "YourCompany"
+      ]
+    },
+    {
+      "id": 10,
+      "name": "P00010",
+      "partner_id": [
+        14,
+        "Azure Interior"
+      ],
+      "currency_id": [
+        1,
+        "USD"
+      ],
+      "date_order": "2026-08-25 10:47:02",
+      "state": "purchase",
+      "order_line": [
+        21
+      ],
+      "company_id": [
+        1,
+        "YourCompany"
+      ]
+    }
+  ],
+  "lines": [
+    {
+      "id": 21,
+      "order_id": [
+        10,
+        "P00010"
+      ],
+      "name": "Office Chair Black",
+      "product_id": [
+        25,
+        "[FURN_0269] Office Chair Black"
+      ],
+      "product_qty": 10.0,
+      "price_unit": 250.5,
+      "product_uom": [
+        2,
+        "Dozens"
+      ],
+      "display_type": false
+    },
+    {
+      "id": 19,
+      "order_id": [
+        9,
+        "P00009"
+      ],
+      "name": "Large Desk",
+      "product_id": [
+        19,
+        "[E-COM09] Large Desk"
+      ],
+      "product_qty": 20.0,
+      "price_unit": 500.0,
+      "product_uom": [
+        2,
+        "Dozens"
+      ],
+      "display_type": false
+    },
+    {
+      "id": 20,
+      "order_id": [
+        9,
+        "P00009"
+      ],
+      "name": "Corner Desk Right Sit",
+      "product_id": [
+        16,
+        "[E-COM06] Corner Desk Right Sit"
+      ],
+      "product_qty": 5.0,
+      "price_unit": 500.0,
+      "product_uom": [
+        2,
+        "Dozens"
+      ],
+      "display_type": false
+    },
+    {
+      "id": 17,
+      "order_id": [
+        8,
+        "P00008"
+      ],
+      "name": "Drawer Black",
+      "product_id": [
+        27,
+        "[FURN_8900] Drawer Black"
+      ],
+      "product_qty": 15.0,
+      "price_unit": 280.8,
+      "product_uom": [
+        2,
+        "Dozens"
+      ],
+      "display_type": false
+    },
+    {
+      "id": 18,
+      "order_id": [
+        8,
+        "P00008"
+      ],
+      "name": "Flipover",
+      "product_id": [
+        28,
+        "[FURN_9001] Flipover"
+      ],
+      "product_qty": 5.0,
+      "price_unit": 450.7,
+      "product_uom": [
+        2,
+        "Dozens"
+      ],
+      "display_type": false
+    }
+  ],
+  "products": [
+    {
+      "id": 16,
+      "default_code": "E-COM06",
+      "name": "Corner Desk Right Sit",
+      "weight": 0.01,
+      "volume": 0.0,
+      "uom_id": [
+        1,
+        "Units"
+      ]
+    },
+    {
+      "id": 19,
+      "default_code": "E-COM09",
+      "name": "Large Desk",
+      "weight": 9.54,
+      "volume": 0.0,
+      "uom_id": [
+        1,
+        "Units"
+      ]
+    },
+    {
+      "id": 25,
+      "default_code": "FURN_0269",
+      "name": "Office Chair Black",
+      "weight": 0.01,
+      "volume": 0.0,
+      "uom_id": [
+        1,
+        "Units"
+      ]
+    },
+    {
+      "id": 27,
+      "default_code": "FURN_8900",
+      "name": "Drawer Black",
+      "weight": 0.01,
+      "volume": 0.0,
+      "uom_id": [
+        1,
+        "Units"
+      ]
+    },
+    {
+      "id": 28,
+      "default_code": "FURN_9001",
+      "name": "Flipover",
+      "weight": 0.01,
+      "volume": 0.0,
+      "uom_id": [
+        1,
+        "Units"
+      ]
+    }
+  ],
+  "uoms": [
+    {
+      "id": 1,
+      "name": "Units",
+      "factor": 1.0,
+      "factor_inv": 1.0,
+      "uom_type": "reference",
+      "category_id": [
+        1,
+        "Unit"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "Dozens",
+      "factor": 0.08333333333333333,
+      "factor_inv": 12.0,
+      "uom_type": "bigger",
+      "category_id": [
+        1,
+        "Unit"
+      ]
+    }
+  ]
+}

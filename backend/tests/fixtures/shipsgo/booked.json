@@ -1,0 +1,295 @@
+{
+  "message": "SUCCESS",
+  "shipment": {
+    "id": 1002,
+    "reference": null,
+    "booking_number": "KCO999999999",
+    "container_number": "TCNU7777777",
+    "container_count": 2,
+    "carrier": {
+      "scac": "ARKU",
+      "name": "ARKAS LINE"
+    },
+    "status": "BOOKED",
+    "route": {
+      "port_of_loading": {
+        "location": {
+          "code": "TRIZT",
+          "name": "IZMIT (GEBZE)",
+          "timezone": "Europe/Istanbul",
+          "country": {
+            "code": "TR",
+            "name": "Turkiye"
+          }
+        },
+        "date_of_loading": "2025-03-10T12:00:00+03:00",
+        "date_of_loading_initial": "2025-03-10T12:00:00+03:00"
+      },
+      "ts_count": 0,
+      "port_of_discharge": {
+        "location": {
+          "code": "ESVLC",
+          "name": "VALENCIA",
+          "timezone": "Europe/Madrid",
+          "country": {
+            "code": "ES",
+            "name": "Spain"
+          }
+        },
+        "date_of_discharge": "2025-03-18T12:00:00+02:00",
+        "date_of_discharge_initial": "2025-03-18T12:00:00+02:00",
+        "date_of_discharge_predicted": "2025-03-19T12:00:00+02:00"
+      },
+      "transit_time": 8,
+      "transit_percentage": 0,
+      "co2_emission": null
+    },
+    "containers": [
+      {
+        "number": "TCNU7777777",
+        "status": "BOOKED",
+        "size": 40,
+        "type": "HC",
+        "movements": [
+          {
+            "event": "EMSH",
+            "status": "ACT",
+            "location": {
+              "code": "TRIZT",
+              "name": "IZMIT (GEBZE)",
+              "timezone": "Europe/Istanbul",
+              "country": {
+                "code": "TR",
+                "name": "Turkiye"
+              }
+            },
+            "vessel": null,
+            "voyage": null,
+            "timestamp": "2025-03-03T12:00:00+03:00"
+          },
+          {
+            "event": "GTIN",
+            "status": "ACT",
+            "location": {
+              "code": "TRIZT",
+              "name": "IZMIT (GEBZE)",
+              "timezone": "Europe/Istanbul",
+              "country": {
+                "code": "TR",
+                "name": "Turkiye"
+              }
+            },
+            "vessel": null,
+            "voyage": null,
+            "timestamp": "2025-03-06T12:00:00+03:00"
+          },
+          {
+            "event": "LOAD",
+            "status": "EST",
+            "location": {
+              "code": "TRIZT",
+              "name": "IZMIT (GEBZE)",
+              "timezone": "Europe/Istanbul",
+              "country": {
+                "code": "TR",
+                "name": "Turkiye"
+              }
+            },
+            "vessel": {
+              "name": "LODUR",
+              "imo": 9219381
+            },
+            "voyage": "ASA2325",
+            "timestamp": "2025-03-10T12:00:00+03:00"
+          },
+          {
+            "event": "DEPA",
+            "status": "EST",
+            "location": {
+              "code": "TRIZT",
+              "name": "IZMIT (GEBZE)",
+              "timezone": "Europe/Istanbul",
+              "country": {
+                "code": "TR",
+                "name": "Turkiye"
+              }
+            },
+            "vessel": {
+              "name": "LODUR",
+              "imo": 9219381
+            },
+            "voyage": "ASA2325",
+            "timestamp": "2025-03-10T12:00:00+03:00"
+          },
+          {
+            "event": "ARRV",
+            "status": "EST",
+            "location": {
+              "code": "ESVLC",
+              "name": "VALENCIA",
+              "timezone": "Europe/Madrid",
+              "country": {
+                "code": "ES",
+                "name": "Spain"
+              }
+            },
+            "vessel": {
+              "name": "LODUR",
+              "imo": 9219381
+            },
+            "voyage": "ASA2325",
+            "timestamp": "2025-03-18T12:00:00+02:00"
+          },
+          {
+            "event": "DISC",
+            "status": "EST",
+            "location": {
+              "code": "ESVLC",
+              "name": "VALENCIA",
+              "timezone": "Europe/Madrid",
+              "country": {
+                "code": "ES",
+                "name": "Spain"
+              }
+            },
+            "vessel": {
+              "name": "LODUR",
+              "imo": 9219381
+            },
+            "voyage": "ASA2325",
+            "timestamp": "2025-03-18T12:00:00+02:00"
+          }
+        ]
+      },
+      {
+        "number": "ARKU7777777",
+        "status": "BOOKED",
+        "size": 40,
+        "type": "HC",
+        "movements": [
+          {
+            "event": "EMSH",
+            "status": "ACT",
+            "location": {
+              "code": "TRIZT",
+              "name": "IZMIT (GEBZE)",
+              "timezone": "Europe/Istanbul",
+              "country": {
+                "code": "TR",
+                "name": "Turkiye"
+              }
+            },
+            "vessel": null,
+            "voyage": null,
+            "timestamp": "2025-03-03T12:00:00+03:00"
+          },
+          {
+            "event": "GTIN",
+            "status": "ACT",
+            "location": {
+              "code": "TRIZT",
+              "name": "IZMIT (GEBZE)",
+              "timezone": "Europe/Istanbul",
+              "country": {
+                "code": "TR",
+                "name": "Turkiye"
+              }
+            },
+            "vessel": null,
+            "voyage": null,
+            "timestamp": "2025-03-06T12:00:00+03:00"
+          },
+          {
+            "event": "LOAD",
+            "status": "EST",
+            "location": {
+              "code": "TRIZT",
+              "name": "IZMIT (GEBZE)",
+              "timezone": "Europe/Istanbul",
+              "country": {
+                "code": "TR",
+                "name": "Turkiye"
+              }
+            },
+            "vessel": {
+              "name": "LODUR",
+              "imo": 9219381
+            },
+            "voyage": "ASA2325",
+            "timestamp": "2025-03-10T12:00:00+03:00"
+          },
+          {
+            "event": "DEPA",
+            "status": "EST",
+            "location": {
+              "code": "TRIZT",
+              "name": "IZMIT (GEBZE)",
+              "timezone": "Europe/Istanbul",
+              "country": {
+                "code": "TR",
+                "name": "Turkiye"
+              }
+            },
+            "vessel": {
+              "name": "LODUR",
+              "imo": 9219381
+            },
+            "voyage": "ASA2325",
+            "timestamp": "2025-03-10T12:00:00+03:00"
+          },
+          {
+            "event": "ARRV",
+            "status": "EST",
+            "location": {
+              "code": "ESVLC",
+              "name": "VALENCIA",
+              "timezone": "Europe/Madrid",
+              "country": {
+                "code": "ES",
+                "name": "Spain"
+              }
+            },
+            "vessel": {
+              "name": "LODUR",
+              "imo": 9219381
+            },
+            "voyage": "ASA2325",
+            "timestamp": "2025-03-18T12:00:00+02:00"
+          },
+          {
+            "event": "DISC",
+            "status": "EST",
+            "location": {
+              "code": "ESVLC",
+              "name": "VALENCIA",
+              "timezone": "Europe/Madrid",
+              "country": {
+                "code": "ES",
+                "name": "Spain"
+              }
+            },
+            "vessel": {
+              "name": "LODUR",
+              "imo": 9219381
+            },
+            "voyage": "ASA2325",
+            "timestamp": "2025-03-18T12:00:00+02:00"
+          }
+        ]
+      }
+    ],
+    "tokens": {
+      "map": "00000000-0000-0000-0000-000000000000"
+    },
+    "followers": [],
+    "tags": [],
+    "creator": {
+      "name": "John Doe",
+      "email": "johndoe@example.com"
+    },
+    "created_at": "2025-04-14 10:31:02",
+    "updated_at": "2025-04-14 10:31:02",
+    "checked_at": "2025-04-14 10:31:02",
+    "discarded_at": null
+  }
+}

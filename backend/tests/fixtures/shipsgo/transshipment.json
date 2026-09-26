@@ -1,0 +1,158 @@
+{
+  "message": "SUCCESS",
+  "shipment": {
+    "id": 1007,
+    "reference": null,
+    "booking_number": "CMDU9911223",
+    "container_number": "TCLU7654321",
+    "container_count": 1,
+    "carrier": {
+      "scac": "CMDU",
+      "name": "CMA CGM"
+    },
+    "status": "SAILING",
+    "route": {
+      "port_of_loading": {
+        "location": {
+          "code": "CNNGB",
+          "name": "NINGBO",
+          "timezone": "Asia/Shanghai",
+          "country": {
+            "code": "CN",
+            "name": "China"
+          }
+        },
+        "date_of_loading": "2026-09-01T09:00:00+08:00"
+      },
+      "ts_count": 1,
+      "port_of_discharge": {
+        "location": {
+          "code": "FRLEH",
+          "name": "LE HAVRE",
+          "timezone": "Europe/Paris",
+          "country": {
+            "code": "FR",
+            "name": "France"
+          }
+        },
+        "date_of_discharge": null,
+        "date_of_discharge_predicted": "2026-09-30T08:00:00+02:00"
+      },
+      "transit_time": 29
+    },
+    "containers": [
+      {
+        "number": "TCLU7654321",
+        "status": "SAILING",
+        "size": 40,
+        "type": "HC",
+        "movements": [
+          {
+            "event": "LOAD",
+            "status": "ACT",
+            "location": {
+              "code": "CNNGB",
+              "name": "NINGBO",
+              "timezone": "Asia/Shanghai",
+              "country": {
+                "code": "CN",
+                "name": "China"
+              }
+            },
+            "vessel": {
+              "name": "CMA CGM JACQUES SAADE",
+              "imo": 9839179
+            },
+            "voyage": "0FLA9W1MA",
+            "timestamp": "2026-09-01T09:00:00+08:00"
+          },
+          {
+            "event": "DEPA",
+            "status": "ACT",
+            "location": {
+              "code": "CNNGB",
+              "name": "NINGBO",
+              "timezone": "Asia/Shanghai",
+              "country": {
+                "code": "CN",
+                "name": "China"
+              }
+            },
+            "vessel": {
+              "name": "CMA CGM JACQUES SAADE",
+              "imo": 9839179
+            },
+            "voyage": "0FLA9W1MA",
+            "timestamp": "2026-09-01T22:00:00+08:00"
+          },
+          {
+            "event": "ARRV",
+            "status": "ACT",
+            "location": {
+              "code": "MAPTM",
+              "name": "TANGER MED",
+              "timezone": "Africa/Casablanca",
+              "country": {
+                "code": "MA",
+                "name": "Morocco"
+              }
+            },
+            "vessel": {
+              "name": "CMA CGM JACQUES SAADE",
+              "imo": 9839179
+            },
+            "voyage": "0FLA9W1MA",
+            "timestamp": "2026-09-11T18:00:00+01:00"
+          },
+          {
+            "event": "DISC",
+            "status": "ACT",
+            "location": {
+              "code": "MAPTM",
+              "name": "TANGER MED",
+              "timezone": "Africa/Casablanca",
+              "country": {
+                "code": "MA",
+                "name": "Morocco"
+              }
+            },
+            "vessel": {
+              "name": "CMA CGM JACQUES SAADE",
+              "imo": 9839179
+            },
+            "voyage": "0FLA9W1MA",
+            "timestamp": "2026-09-12T06:30:00+01:00"
+          },
+          {
+            "event": "ARRV",
+            "status": "EST",
+            "location": {
+              "code": "FRLEH",
+              "name": "LE HAVRE",
+              "timezone": "Europe/Paris",
+              "country": {
+                "code": "FR",
+                "name": "France"
+              }
+            },
+            "vessel": {
+              "name": "MSC RIFAYA",
+              "imo": 9776062
+            },
+            "voyage": "FR431W",
+            "timestamp": "2026-09-30T08:00:00+02:00"
+          }
+        ]
+      }
+    ],
+    "tokens": {
+      "map": "00000000-0000-0000-0000-000000000000"
+    },
+    "followers": [],
+    "tags": [],
+    "created_at": "2026-09-01 10:00:00",
+    "updated_at": "2026-09-12 07:00:00",
+    "checked_at": "2026-09-12 07:00:00",
+    "discarded_at": null
+  }
+}

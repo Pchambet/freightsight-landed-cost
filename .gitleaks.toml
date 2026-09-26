@@ -1,0 +1,16 @@
+# Extends the default gitleaks rules. Only the CI build placeholders are allow-listed: they are not
+# credentials (a publishable key is public by design, and this one encodes "clerk.example.com").
+# And IANA time zone names: `zone.key == "Europe/Amsterdam"` reads like `key = "<secret>"` to the
+# generic rule.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "CI build placeholders for Clerk, and time zone names"
+regexes = [
+  '''pk_test_Y2xlcmsuZXhhbXBsZS5jb20k''',
+  '''sk_test_placeholder_for_ci_build_only''',
+  '''pk_live_Y2xlcmsuZXhhbXBsZS5jb20k''',
+  '''sk_live_placeholder_for_ci_build_only''',
+  '''^(Africa|America|Asia|Atlantic|Australia|Europe|Indian|Pacific)/[A-Za-z_]+$''',
+]

@@ -1,0 +1,108 @@
+{
+  "purchase_orders": [
+    {
+      "id": 12,
+      "name": "P00012",
+      "picking_ids": [
+        22
+      ]
+    }
+  ],
+  "pickings": [
+    {
+      "id": 22,
+      "name": "WH/IN/00007",
+      "state": "done",
+      "date_done": "2026-09-09 11:25:52",
+      "purchase_id": [
+        12,
+        "P00012"
+      ]
+    }
+  ],
+  "moves": [
+    {
+      "id": 40,
+      "picking_id": [
+        22,
+        "WH/IN/00007"
+      ],
+      "product_id": [
+        37,
+        "[TYR-20555R16] FS Tyre 205/55R16"
+      ],
+      "purchase_line_id": [
+        23,
+        "FS Tyre"
+      ],
+      "quantity": 100.0
+    }
+  ],
+  "purchase_order_lines": [
+    {
+      "id": 23,
+      "order_id": [
+        12,
+        "P00012"
+      ]
+    }
+  ],
+  "products_valued": [
+    {
+      "id": 37,
+      "default_code": "TYR-20555R16",
+      "name": "FS Tyre 205/55R16",
+      "valuation": "real_time",
+      "cost_method": "fifo"
+    }
+  ],
+  "products_unvalued": [
+    {
+      "id": 19,
+      "default_code": "E-COM09",
+      "name": "Large Desk",
+      "valuation": "manual_periodic",
+      "cost_method": "standard"
+    }
+  ],
+  "landed_cost_read": [
+    {
+      "id": 2,
+      "name": "FreightSight MSCU4821990",
+      "state": "draft",
+      "amount_total": 2766.67,
+      "cost_lines": [
+        2
+      ],
+      "valuation_adjustment_lines": [
+        3
+      ]
+    }
+  ],
+  "adjustments": [
+    {
+      "id": 3,
+      "move_id": [
+        40,
+        "P00012/TYR-20555R16: Vendors>Stock"
+      ],
+      "cost_line_id": [
+        2,
+        "Ocean Freight \u2014 invoice FA-2026-0912"
+      ],
+      "additional_landed_cost": 2766.67
+    }
+  ],
+  "landed_cost_products": [
+    {
+      "id": 38,
+      "default_code": "FS-FREIGHT"
+    }
+  ],
+  "journals": [
+    {
+      "id": 3,
+      "code": "MISC"
+    }
+  ]
+}

@@ -1,0 +1,106 @@
+{
+  "data": {
+    "id": "5c2f0a6b-7f0c-4de1-9a3e-1c9b3f0a55d0",
+    "type": "webhook_notification",
+    "attributes": {
+      "event": "container.transport.rail_ramp_departed_unknown",
+      "delivery_status": "pending",
+      "created_at": "2026-09-07T11:00:00Z"
+    },
+    "relationships": {
+      "webhook": {
+        "data": {
+          "id": "8a5ffa8f-3dc1-48de-a0ea-09fc4f2cd96f",
+          "type": "webhook"
+        }
+      },
+      "reference_object": {
+        "data": {
+          "id": "d4a8b1c0-3e2f-4a5b-8c6d-7e8f9a0b1c2d",
+          "type": "transport_event"
+        }
+      }
+    }
+  },
+  "included": [
+    {
+      "id": "d4a8b1c0-3e2f-4a5b-8c6d-7e8f9a0b1c2d",
+      "type": "transport_event",
+      "attributes": {
+        "event": "container.transport.rail_ramp_departed_unknown",
+        "created_at": "2026-09-06T09:12:44Z",
+        "voyage_number": "443W",
+        "timestamp": "2026-09-07T10:45:00Z",
+        "location_locode": "USMEM",
+        "timezone": "Europe/Paris",
+        "data_source": "ais"
+      },
+      "relationships": {
+        "shipment": {
+          "data": {
+            "id": "06264731-503e-498e-bc76-f90b87b31562",
+            "type": "shipment"
+          }
+        },
+        "container": {
+          "data": {
+            "id": "eeafd337-72b5-4e5c-87cb-9ef83fa99cf4",
+            "type": "container"
+          }
+        },
+        "vessel": {
+          "data": null
+        },
+        "location": {
+          "data": {
+            "id": "0ad2cf2b-e694-4ccc-9cd2-40af0d1fa1b5",
+            "type": "port"
+          }
+        },
+        "terminal": {
+          "data": null
+        }
+      }
+    },
+    {
+      "id": "eeafd337-72b5-4e5c-87cb-9ef83fa99cf4",
+      "type": "container",
+      "attributes": {
+        "number": "MSCU4821990",
+        "seal_number": "ML-CN0084417",
+        "equipment_type": "dry",
+        "equipment_length": 40,
+        "equipment_height": "high_cube",
+        "pod_locode": "FRLEH",
+        "pod_eta_at": "2026-09-04T06:15:00Z",
+        "pod_arrived_at": "2026-09-04T05:40:00Z",
+        "pod_discharged_at": null,
+        "pod_full_out_at": null,
+        "available_for_pickup": null,
+        "pickup_lfd": null,
+        "pickup_appointment_at": null,
+        "holds_at_pod_terminal": [],
+        "fees_at_pod_terminal": []
+      },
+      "relationships": {
+        "shipment": {
+          "data": {
+            "id": "06264731-503e-498e-bc76-f90b87b31562",
+            "type": "shipment"
+          }
+        }
+      }
+    },
+    {
+      "id": "0ad2cf2b-e694-4ccc-9cd2-40af0d1fa1b5",
+      "type": "port",
+      "attributes": {
+        "name": "Le Havre",
+        "code": "FRLEH",
+        "city": "Le Havre",
+        "country_code": "FR",
+        "time_zone": "Europe/Paris"
+      }
+    }
+  ]
+}

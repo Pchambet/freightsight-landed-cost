@@ -1,0 +1,30 @@
+{
+  "message": "SUCCESS",
+  "shipment": {
+    "id": 1001,
+    "reference": "INTERNAL_UNIQUE_IDENTIFIER",
+    "booking_number": null,
+    "container_number": "MSDU7777777",
+    "container_count": 1,
+    "carrier": {
+      "scac": "MSCU",
+      "name": "MSC"
+    },
+    "status": "INPROGRESS",
+    "route": null,
+    "containers": [],
+    "tokens": {
+      "map": "00000000-0000-0000-0000-000000000000"
+    },
+    "followers": [],
+    "tags": [],
+    "creator": {
+      "name": "John Doe",
+      "email": "john.doe@example.com"
+    },
+    "created_at": "2025-04-14 10:31:02",
+    "updated_at": "2025-04-14 10:31:02",
+    "checked_at": "2025-04-14 10:31:02",
+    "discarded_at": null
+  }
+}

@@ -1,0 +1,5 @@
+﻿N° commande;Fournisseur;Devise;Date de commande;Incoterm;N° ligne;Référence;Désignation;Quantité;Prix unitaire;Taux de droits
+PO-2026-101;Zhejiang Kaiyuan;EUR;05/01/2026;FOB;1;TYR-20555R16;Pneu 205/55 R16 91V;750;14,00;4,5
+PO-2026-101;Zhejiang Kaiyuan;EUR;05/01/2026;FOB;2;JACK-2T;Cric hydraulique 2 t;100;18,00;0
+PO-2026-102;Ningbo Mats;EUR;08/01/2026;FOB;1;MAT-EVA-6040;Tapis EVA 60x40;500;20,00;6,5
+PO-2026-103;Zhejiang Kaiyuan;EUR;20/01/2026;FOB;1;TYR-20555R16;Pneu 205/55 R16 91V;1200;14,00;4,5

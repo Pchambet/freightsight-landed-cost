@@ -1,0 +1,7 @@
+Sage 100 Gestion commerciale - Commandes fournisseurs;;;;;;;;;
+Édité le 17/09/2026 par P. CHAMBET - Exercice 2026;;;;;;;;;
+N° commande;Fournisseur;Date;Réf. article;Désignation;Qté;PU HT;Poids (kg);Volume (m3);N° TC
+CF-2026-0147;Michelin France;12/09/2026;PNE-205-55;Pneu 205/55 R16 été;600;42,90;7,250;0,042;MSCU1234567
+CF-2026-0147;Michelin France;12/09/2026;PNE-225-45;Pneu 225/45 R17 hiver;400;58,15;8,400;0,051;MSCU1234567
+CF-2026-0148;Établissements Dufour;15/09/2026;JAN-16-ALU;Jante alu 16 pouces;250;31,00;6,100;0,038;CMAU9876543
+TOTAL;;;;;1 250;;;;

@@ -1,0 +1,6 @@
+Commande;Fournisseur;Devise;Date de commande;Article;Description;Quantité;Prix unitaire
+P00042;Shenzhen Feng Trading;USD;2026-08-30;SKU-A;Boîtier aluminium;1200;3,45
+;;;;SKU-B;Câble USB-C 1 m;3000;0,87
+;;;;SKU-C;Notice imprimée FR;1200;0,12
+P00043;Fonderie de l'Ouest;EUR;2026-09-02;SKU-D;Support mural acier;450;7,90
+;;;;SKU-E;Visserie inox (sachet);450;1,05
