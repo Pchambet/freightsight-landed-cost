@@ -159,7 +159,9 @@ def figure(path: Path) -> None:
     ink, teal, amber, slate, grid = "#0f172a", "#0d9488", "#d97706", "#64748b", "#e2e8f0"
     colours = [slate, teal, amber]
     table = [unit_landed_costs(p) for p in POLICIES]
-    fig, axes = plt.subplots(1, 2, figsize=(11, 4.2), dpi=200)
+    # One x scale for both panels, so the charge bars compare across products.
+    xmax = max(float(t[line[0]]) for t in table for line in LINES) * 1.55
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4.2), dpi=200, sharex=True)
     for ax, (sku, label, _, _, price, _, cbm, _) in zip(axes, LINES, strict=True):
         fob = float(price)
         landed = [float(t[sku]) for t in table]
@@ -172,7 +174,7 @@ def figure(path: Path) -> None:
             ax.text(v + 0.3, row, note, va="center", fontsize=8.5, color=ink)
         ax.set_yticks(list(rows), [p.name for p in POLICIES], fontsize=9, color=ink)
         ax.invert_yaxis()
-        ax.set_xlim(0, max(landed) * 1.55)
+        ax.set_xlim(0, xmax)
         ax.set_xlabel("Landed cost per unit (€)", color=ink, fontsize=9)
         charges = [v - fob for v in landed]
         ax.set_title(
