@@ -1,91 +1,95 @@
-# Lecture des factures de transitaire — ce qui est mesuré, et ce qui ne l'est pas
+# Reading forwarder invoices: what is measured, and what is not
 
-« Envoyez-nous une facture, on vous rend la ventilation » est l'offre d'entrée. Elle repose sur un
-lecteur à règles (`backend/app/adapters/extraction/regex_extractor.py`) qui doit fonctionner sans clé,
-sans réseau et sans envoyer le document à qui que ce soit. Jusqu'au 17 septembre 2026 sa qualité
-n'était mesurée nulle part : un seul PDF d'essai dans le dépôt. Ce document décrit le banc qui la
-mesure désormais, les chiffres, et leurs limites.
+*[Version française](invoice-reading-bench.fr.md)*
 
-## Le banc
+FreightSight's entry offer is "send us one invoice, get the allocation back". It rests on a rule-based
+reader (`backend/app/adapters/extraction/regex_extractor.py`) that must work with no API key, no network
+and without sending the document anywhere. Until 17 September 2026 its quality was not measured at all:
+the repository held a single sample PDF. This page describes the bench that now measures it, the
+numbers, and their limits.
 
-`backend/tests/bench_invoices_*.py` — 55 PDF construits comme de vrais tableaux (chaque cellule
-posée à sa place, montants alignés à droite, plusieurs pages), pas des lignes de texte :
+## The bench
 
-- **9 familles de mises en page** rencontrées sur des factures d'import françaises, chacune rendue
-  pour 4 factures (libellés connus, libellés qu'aucune liste ne connaît, quantités > 1, fret en
-  dollars converti sur la ligne) : quatre colonnes (désignation, quantité, PU, montant) ; code TVA
-  après le montant (Sage, EBP) ; taxable / non taxable côte à côte ; devise convertie sur la ligne ;
-  relevé d'armateur en anglais ; débours à part des prestations ; avoir ; plusieurs conteneurs sur
-  une facture ; tableau sur deux pages avec report.
-- **Chaque facture deux fois** : dessinée ligne par ligne, puis colonne par colonne — ce que font les
-  logiciels qui construisent un tableau avec des cadres de texte. Le texte sort alors du PDF avec
-  tous les libellés d'abord et tous les montants ensuite.
-- **7 pièges**, écrits à part et avant de regarder si le lecteur s'en sortait : taux de TVA imprimé à
-  droite du montant, libellé sur deux lignes, espace insécable et symbole €, montants avec centimes
-  au-dessus du tableau (valeur en douane, poids, cours), ligne de TVA dans le tableau, TVA import en
-  débours, totaux sans le mot « total » (« Montant HT », « Net à payer »).
+`backend/tests/bench_invoices_*.py` generates 55 PDFs built like real tables (each cell placed where it
+belongs, amounts right-aligned, several pages), not lines of text:
 
-Ce qui est compté, par facture : les lignes lues avec le bon montant, les lignes inventées, le type
-de coût quand le libellé en désigne un, l'en-tête (numéro, date, devise, total HT, total, conteneurs),
-et surtout l'**erreur silencieuse** : une lecture fausse que le contrôle arithmétique ne signale pas.
-Une lecture a le droit d'être incomplète ; elle n'a pas le droit de l'être sans le dire.
+- **9 layout families** seen on French import invoices, each rendered as 4 invoices (known labels,
+  labels no list knows, quantities > 1, freight in dollars converted on the line): four columns
+  (description, quantity, unit price, amount); VAT code after the amount (Sage, EBP); taxable and
+  non-taxable side by side; currency converted on the line; carrier statement in English;
+  disbursements separate from services; credit note; several containers on one invoice; a table running
+  over two pages with a carried-forward subtotal.
+- **Every invoice twice**: drawn row by row, then column by column, which is what tools that build a
+  table from text boxes do. The text then comes out of the PDF with every label first and every amount
+  after.
+- **7 traps**, written separately and *before* checking whether the reader handled them: VAT rate
+  printed to the right of the amount, a label wrapped over two lines, non-breaking spaces and the €
+  sign, amounts with cents above the table (customs value, weight, exchange rate), a VAT line inside
+  the table, import VAT as a disbursement, totals without the word "total" ("Montant HT",
+  "Net à payer").
 
-Lancer le banc : `cd backend && PYTHONPATH=tests .venv/bin/python -m bench_invoices_scoring`.
-`tests/test_invoice_bench.py` en fait un cliquet : ce qui est lu aujourd'hui doit l'être demain.
+Scored per invoice: lines read with the right amount, invented lines, the cost type when the label
+names one, the header (number, date, currency, net total, total, containers) and above all the
+**silent error**: a wrong reading that the arithmetic check does not flag. A reading may be incomplete;
+it may not be incomplete *without saying so*.
 
-## Les chiffres
+Run the bench: `cd backend && PYTHONPATH=tests .venv/bin/python -m bench_invoices_scoring` (prints a
+table per layout family, labels in French). `tests/test_invoice_bench.py` turns it into a ratchet: what
+is read today must still be read tomorrow.
 
-| | Avant (16 sept.) | Après (17 sept.) |
+## The numbers
+
+| | Before (16 Sep) | After (17 Sep) |
 |---|---|---|
-| Lignes lues — 9 familles, 48 factures | 82 / 278 (29 %) | 278 / 278 (100 %) |
-| … dont tableaux dessinés colonne par colonne | 0 % | 100 % |
-| … dont « code TVA après le montant » | 0 % | 100 % |
-| Lignes lues — 7 pièges (à la première mesure, avant correction) | — | 19 / 24 (79 %), 7 inventées, **2 erreurs silencieuses** |
-| Lignes lues — 7 pièges (après correction) | — | 24 / 24, 0 inventée, 0 silencieuse |
-| Factures lues sans aucune erreur | 11 / 48 | 55 / 55 |
-| Erreurs silencieuses | 0 | 0 |
+| Lines read, 9 families, 48 invoices | 82 / 278 (29 %) | 278 / 278 (100 %) |
+| … of which tables drawn column by column | 0 % | 100 % |
+| … of which "VAT code after the amount" | 0 % | 100 % |
+| Lines read, 7 traps, first blind measurement | — | 19 / 24 (79 %), 7 invented, **2 silent errors** |
+| Lines read, 7 traps, after the fixes | — | 24 / 24, 0 invented, 0 silent |
+| Invoices read with no error at all | 11 / 48 | 55 / 55 |
+| Silent errors | 0 | 0 |
 
-Ce qui a changé dans le lecteur :
+Re-run on 2 October 2026: 55 / 55 invoices, 302 / 302 lines, 0 invented, 239 / 239 cost types, 0 silent
+errors.
 
-1. **Le texte est lu par sa géométrie** (`extraction_mode="layout"` de pypdf) : une ligne du tableau
-   reste une ligne quel que soit l'ordre dans lequel le fichier dessine ses cellules, et l'écart entre
-   deux colonnes reste visible — c'est aussi ce qui distingue « 2   285,00 » (deux manutentions à
-   285 €) de « 2 285,00 ».
-2. **Toute ligne du tableau est une ligne de frais**, que son libellé soit connu ou non. Avant, une
-   ligne « Frais de sûreté portuaire », « Taxe d'escale », « Pesage VGM » ou « Remise commerciale »
-   n'arrivait jamais à l'écran : le contrôle arithmétique disait que la facture ne tombait pas juste,
-   et le relecteur devait trouver seul ce qui manquait. Elle arrive maintenant sans type de coût,
-   confiance 0,50 (« à relire »), et c'est à une personne de la nommer.
-3. Le tableau est repéré par sa ligne d'en-tête (ou, sans en-tête, par sa première ligne portant un
-   montant avec centimes) et s'arrête à la première ligne de total. Sous-totaux, reports, valeur en
-   douane, cours, poids et ligne de TVA de la facture ne sont pas des frais.
-4. Le montant est la dernière colonne qui en porte un — sauf quand l'en-tête nomme la colonne
-   « Montant » et que la ligne a une cellule dans chaque colonne : un taux de TVA « 20,00 » imprimé à
-   droite n'est alors plus pris pour le montant.
-5. Code TVA, devise ou symbole après le montant ; libellé sur deux lignes ; conteneur en titre de
-   section ; numéro d'avoir ; TVA à l'importation en débours (`IMPORT_VAT`) ; espaces insécables,
-   fines et étroites ; « 65,000,00 » (deux cellules collées) refusé plutôt que lu 65 000.
-6. **Aucun total lisible → lecture non vérifiée** (`@unverified_total`, confiance plafonnée) : « ça
-   tombe juste » ne peut pas se dire d'une lecture qui n'avait rien à quoi se comparer. C'était la
-   cause des deux erreurs silencieuses des pièges.
+What changed in the reader:
 
-## Ce que ces chiffres ne disent pas
+1. **Text is read by its geometry** (pypdf's `extraction_mode="layout"`): a table row stays a row
+   whatever order the file draws its cells in, and the gap between two columns stays visible. That is
+   also what tells "2   285,00" (two handling operations at 285 €) from "2 285,00".
+2. **Every row of the table is a charge**, whether its label is known or not. Before, a row such as
+   "port security fee", "call tax", "VGM weighing" or "commercial discount" never reached the screen:
+   the arithmetic check said the invoice did not add up, and the reviewer had to find what was missing
+   alone. It now arrives with no cost type and confidence 0.50 ("to review"), and a person names it.
+3. The table is located by its header row (or, without a header, by its first row carrying an amount
+   with cents) and stops at the first total row. Subtotals, carried-forward amounts, customs value,
+   exchange rate, weight and the invoice's VAT line are not charges.
+4. The amount is the last column that carries one, except when the header names the "Montant" column
+   and the row has a cell in every column: a VAT rate "20,00" printed to the right is then no longer
+   taken for the amount.
+5. VAT code, currency or symbol after the amount; labels on two lines; container as a section title;
+   credit-note numbers; import VAT as a disbursement (`IMPORT_VAT`); non-breaking, thin and narrow
+   spaces; "65,000,00" (two cells run together) refused rather than read as 65 000.
+6. **No readable total means an unverified reading** (`@unverified_total`, capped confidence): "it adds
+   up" cannot be said of a reading that had nothing to compare against. This was the cause of the two
+   silent errors on the traps.
 
-- **Ce ne sont pas des factures de clients.** Ce sont les structures que j'en connais, et j'ai écrit
-  le corpus et le lecteur : 100 % veut dire « ces familles sont couvertes », pas « 100 % des factures
-  seront lues ». Les 7 pièges l'ont montré : écrits à l'aveugle, ils ont donné 79 % et deux erreurs
-  silencieuses. Le prochain jeu écrit à l'aveugle donnera encore moins que 100 %.
-- **Le vrai chiffre viendra de factures réelles.** Le banc sait les scorer : déposer `nom.pdf` et
-  `nom.json` (numéro, date, devise, totaux, lignes attendues) dans
-  `backend/tests/fixtures/invoices_real/` — dossier ignoré par git, rien ne quitte le poste. Dix
-  factures de trois transitaires différents, obtenues du premier design partner, valent plus que tout
-  ce corpus.
-- **Un PDF scanné n'est pas lu du tout** (`NO_TEXT_LAYER`) : il n'a pas de couche texte, et le
-  lecteur n'a pas d'OCR. C'est dit à l'écran, avec la saisie manuelle comme issue. À traiter ensuite :
-  OCR local (Tesseract) avant les règles, mesuré par ce même banc sur des images des 55 PDF.
-- **Limite connue de pypdf** : le texte « layout » garde l'ordre des colonnes, pas leur alignement
-  (la même colonne finit à dix caractères d'écart d'une ligne à l'autre), et des cellules dessinées de
-  droite à gauche dans une même ligne sortent collées. Le premier cas est contourné par le comptage
-  des colonnes ; le second est refusé (montant illisible → ligne manquante → contrôle arithmétique).
-- Le lecteur par modèle (`llm_extractor.py`, activé seulement si une clé est posée) n'est pas mesuré
-  ici : le banc ne doit dépendre d'aucun service. Le même corpus peut le scorer à la demande.
+## What these numbers do not say
+
+- **These are not customer invoices.** They are the structures I know of, and I wrote both the corpus
+  and the reader: 100 % means "these families are covered", not "100 % of invoices will be read". The 7
+  traps showed it: written blind, they scored 79 % with two silent errors. The next blind set will
+  score below 100 % again.
+- **The real number will come from real invoices.** The bench can score them: drop `name.pdf` and
+  `name.json` (number, date, currency, totals, expected lines) into
+  `backend/tests/fixtures/invoices_real/`, a git-ignored folder, so nothing leaves the machine. Ten
+  invoices from three different forwarders are worth more than this whole corpus.
+- **A scanned PDF is not read at all** (`NO_TEXT_LAYER`): it has no text layer and the reader has no OCR.
+  The screen says so and offers manual entry. Next step: local OCR (Tesseract) before the rules, measured
+  on images of the same 55 PDFs.
+- **Known pypdf limit**: layout text keeps the order of columns, not their alignment (the same column
+  can end ten characters apart from one row to the next), and cells drawn right to left within a row
+  come out glued together. The first case is handled by counting columns; the second is refused
+  (unreadable amount, missing line, arithmetic check fails).
+- The model-based reader (`llm_extractor.py`, enabled only when a key is set) is not measured here: the
+  bench must not depend on any external service. The same corpus can score it on demand.
