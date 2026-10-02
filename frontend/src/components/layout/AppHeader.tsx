@@ -102,7 +102,7 @@ export default function AppHeader({ unreadAlerts = 0, orgName }: { unreadAlerts?
           </div>
 
           {/* min-w-0 lets this group shrink below its content's natural width instead of forcing the header to
-              scroll sideways at 390 px (audit B43); the org switcher itself is the part that used to overflow. */}
+              scroll sideways at 390 px; the org switcher itself is the part that used to overflow. */}
           <div className="ml-auto flex items-center gap-1 sm:gap-2 text-xs text-slate-500 shrink-0 min-w-0">
             <div className="hidden sm:block"><LocaleSwitcher /></div>
             <Link

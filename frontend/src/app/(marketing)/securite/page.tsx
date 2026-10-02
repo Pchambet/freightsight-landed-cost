@@ -29,7 +29,7 @@ const SUBPROCESSORS = [
 ];
 
 // Not live in production today (no Resend/Shipsgo key is configured). Listed now, ahead of the switch, not discovered after the fact by a DPO
-// who cross-checks an alert e-mail's headers against this page (A4-5).
+// who cross-checks an alert e-mail's headers against this page.
 const SUBPROCESSORS_PENDING = [
   ["Shipsgo", "Suivi automatique des conteneurs", "Turquie", "Numéros de conteneur uniquement"],
   ["Resend", "Envoi des alertes par e-mail (dernier jour franc, surestaries)", "États-Unis, clauses contractuelles types", "Adresse e-mail du destinataire et contenu de l'alerte (référence conteneur ou commande)"],

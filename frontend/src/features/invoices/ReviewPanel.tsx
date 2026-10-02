@@ -24,7 +24,7 @@ function LineRow({ invoiceId, line, targets, editable, confirmed }: { invoiceId:
   const typeLabel = useTranslations("domain.costType");
   const scopeLabel = useTranslations("domain.costScope");
   const locale = useLocale();
-  // Displayed with a comma in French (audit N11 — the API's dot-decimal "3915.40" sat next to
+  // Displayed with a comma in French (the API's dot-decimal "3915.40" sat next to
   // otherwise-French text); `normalizeAmount` on the server action accepts either separator back,
   // so typing a dot still works too. The dirty check below compares against this same display value,
   // not the raw API string, or switching locale would show the line as edited when nothing changed.
@@ -290,7 +290,7 @@ export default function ReviewPanel({ invoice, targets }: { invoice: InvoiceResp
     });
 
   // Only the fresh, just-confirmed feedback — not a standing fallback recomputed from `lines` on every
-  // load, which used to duplicate the page's own "Prochaine étape" card word for word (audit B21/B36).
+  // load, which used to duplicate the page's own "Prochaine étape" card word for word.
   const continueLinks = continueTo ?? [];
 
   return (

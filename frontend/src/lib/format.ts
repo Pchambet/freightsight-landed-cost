@@ -20,21 +20,21 @@ export function money(amount: string | number | null | undefined, currency: stri
 
 /**
  * Same two decimals as `money` everywhere on screen (the fiche conteneur used to show four, the
- * rapports two, for the same reference — see audit B10). The domain keeps more precision internally
+ * rapports two, for the same reference). The domain keeps more precision internally
  * (unit_landed_cost carries 4+ decimals so totals stay exact), this is display-only rounding.
  */
 export function unitCost(amount: string | number, currency: string, locale: string = DEFAULT_LOCALE): string {
   return money(amount, currency, locale);
 }
 
-/** The placeholder for a free-typed amount field: "0,00" in French, "0.00" in English (audit B15 — the field accepts a comma but showed an English-dotted placeholder). */
+/** The placeholder for a free-typed amount field: "0,00" in French, "0.00" in English (the field accepts a comma but showed an English-dotted placeholder). */
 export function amountPlaceholder(locale: string = DEFAULT_LOCALE): string {
   return locale === "fr" ? "0,00" : "0.00";
 }
 
 /**
  * A raw dot-decimal amount from the API ("3915.40"), shown with the locale's own separator in an
- * editable field — a comma in French (audit N11: the field sat mid-screen among French text but
+ * editable field — a comma in French (the field sat mid-screen among French text but
  * showed the American dot). Display only: what the field sends back to the server action still goes
  * through `normalizeAmount` (features/actions.ts), which already accepts either separator.
  */

@@ -70,7 +70,7 @@ export default async function InvoicePage({ params }: Params) {
   );
   // `extractor_kind` (RULES/MODEL/UNKNOWN) and each line's `confidence_band` (HIGH/MEDIUM/LOW) are
   // new fields the generated schema does not carry yet (needs_other_lane) — read through a narrow
-  // type rather than the raw `extractor` string ("regex") a DAF cannot make sense of (audit B24/B25).
+  // type rather than the raw `extractor` string ("regex") a DAF cannot make sense of.
   const extractorKindValue = (invoice as { extractor_kind?: string }).extractor_kind ?? "";
   const confidenceBandValue = (invoice as { confidence_band?: "HIGH" | "MEDIUM" | "LOW" }).confidence_band;
   // Costs, not lines: lines of one type on one target and currency become one cost, which each of
@@ -100,7 +100,7 @@ export default async function InvoicePage({ params }: Params) {
                 {extractorKind.has(extractorKindValue as never) ? extractorKind(extractorKindValue as never) : t("extractedBy", { extractor: invoice.extractor })}{" "}
                 {/* `flagOnly`: the extractor kind just above already says how it was read ("Lecture
                     automatique par règles") — repeating "Lecture automatique" from the confidence
-                    tier said the same thing twice (audit N3). */}
+                    tier said the same thing twice. */}
                 <ConfidenceBadge value={invoice.confidence} band={confidenceBandValue} confirmed={invoice.status === "CONFIRMED"} flagOnly className="align-middle" />
               </>
             ) : null}

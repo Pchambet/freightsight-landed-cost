@@ -49,7 +49,7 @@ function parseValue(v: unknown): unknown {
  * uuids, booleans. This is the one place that turns that back into what a DAF (or an auditor) reads:
  * every enum through its existing `domain.*` translation, every amount and fx rate through the same
  * locale-aware formatters as the rest of the screen, every id shortened rather than shown in full.
- * See audit B41: this table used to be the one screen where the raw model leaked straight through.
+ * This table used to be the one screen where the raw model leaked straight through.
  */
 function formatValue(key: string, v: unknown, f: Formatters): string {
   const val = parseValue(v);

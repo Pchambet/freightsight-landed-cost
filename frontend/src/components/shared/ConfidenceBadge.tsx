@@ -10,7 +10,7 @@ const STYLE: Record<"high" | "medium" | "low" | "confirmed", string> = {
 
 /**
  * What a DAF should act on ("lecture automatique · à relire") instead of a bare decimal like
- * "0.60" — see audit B24/B25. The exact score stays available as a tooltip for whoever wants it.
+ * "0.60". The exact score stays available as a tooltip for whoever wants it.
  *
  * `band` is the backend's own `confidence_band` (HIGH/MEDIUM/LOW at 0.8/0.5, not yet in the
  * generated schema — needs_other_lane), preferred over recomputing the tier here so the two never
@@ -18,10 +18,10 @@ const STYLE: Record<"high" | "medium" | "low" | "confirmed", string> = {
  * been updated to pass it, or a response from before the field existed.
  *
  * `confirmed` overrides the tier wording once the invoice is confirmed: a confirmed line is no
- * longer "to review" even if it was read with medium/low confidence (audit N3) — the badge says so
+ * longer "to review" even if it was read with medium/low confidence — the badge says so
  * instead of keeping the reading-quality label. `flagOnly` drops the "Lecture automatique/incertaine"
  * prefix for a caller that already states how the document was read right next to the badge (the
- * invoice detail header): showing both repeated "Lecture automatique" back to back (audit N3).
+ * invoice detail header): showing both repeated "Lecture automatique" back to back.
  */
 export default function ConfidenceBadge({
   value,

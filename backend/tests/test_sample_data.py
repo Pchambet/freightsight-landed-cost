@@ -52,7 +52,7 @@ def test_sample_data_seeds_the_reference_case(client: TestClient) -> None:
     assert report["totals"]["landed"] == "26345.10"
     assert report["totals"]["vat"] == "0.00"
     # Nothing has been invoiced yet: every euro on this container is still an estimate, so the
-    # completeness gauge the front shows the presenter as "postes facturés" reads 0, honestly.
+    # completeness gauge the front shows as "postes facturés" reads 0, honestly.
     assert report["totals"]["estimated"] == "5845.10"
     assert report["totals"]["actual"] == "0.00"
     assert report["totals"]["variance"] == "0.00"

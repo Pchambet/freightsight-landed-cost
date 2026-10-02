@@ -3,7 +3,7 @@ import { ArrowLeft, ChevronRight } from "lucide-react";
 
 /**
  * Wayfinding on detail pages: a back link, and the current page name only when it says something
- * the h1 right below does not already say — repeating it was the duplicated-title bug in audit B21
+ * the h1 right below does not already say — repeating it read as a duplicated title
  * (e.g. "Importer des commandes" as both the breadcrumb and the h1, one line apart).
  */
 export default function Breadcrumb({ backHref, backLabel, current }: { backHref: string; backLabel: string; current?: string }) {

@@ -86,7 +86,7 @@ export default async function ContainerPage({ params }: Params) {
 
   return (
     <>
-      {/* container.container_number is already the h1 right below — no need to repeat it (audit B21). */}
+      {/* container.container_number is already the h1 right below — no need to repeat it. */}
       <Breadcrumb backHref="/containers" backLabel={t("breadcrumb")} />
 
       <PageHeader

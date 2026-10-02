@@ -10,8 +10,8 @@ type NavItem = { href: string; label: string };
 /**
  * Burger menu for the marketing header below md (768px). At 390px the nav links, "Se connecter"
  * and the booking button don't fit on one row: the button used to wrap onto three lines and
- * Sécurité, the page a DSI looks for, was unreachable without scrolling the whole page (A4 audit,
- * table A, row A4). Moving the links in here is what keeps the booking button on a single line.
+ * Sécurité, the page a DSI looks for, was unreachable without scrolling the whole page.
+ * Moving the links in here is what keeps the booking button on a single line.
  */
 export default function MobileNav({ items }: { items: NavItem[] }) {
   const [open, setOpen] = useState(false);

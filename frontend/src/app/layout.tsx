@@ -18,7 +18,7 @@ export async function generateMetadata(): Promise<Metadata> {
   const t = await getTranslations("common");
   return {
     // Absolute base for every relative Open Graph/Twitter image and URL resolved below it
-    // (A4-3: without this Next warns and falls back to localhost, so shared links break).
+    // (without this Next warns and falls back to localhost, so shared links break).
     metadataBase: new URL(site.url),
     title: { default: "FreightSight", template: "%s · FreightSight" },
     description: t("appDescription"),

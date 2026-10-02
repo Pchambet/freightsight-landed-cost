@@ -38,7 +38,7 @@ for (const { path, name } of PUBLIC_PAGES) {
     await expect(page.locator('a[href*="cal.com"], a[href*="calendly"], a[href^="mailto:"]').first()).toHaveCount(1);
   });
 
-  test(`${name} has an Open Graph image (A4-3: a shared link used to show nothing)`, async ({ page }) => {
+  test(`${name} has an Open Graph image (a shared link used to show nothing)`, async ({ page }) => {
     await page.goto(path);
     const ogImage = page.locator('meta[property="og:image"]');
     await expect(ogImage).toHaveCount(1);
@@ -94,7 +94,7 @@ test("robots.txt keeps the application out of search engines", async ({ request 
   expect(body).toContain("Allow: /securite");
 });
 
-test("sitemap.xml lists the public pages (A4-4: it used to 307 to /sign-in)", async ({ request }) => {
+test("sitemap.xml lists the public pages (it used to 307 to /sign-in)", async ({ request }) => {
   const res = await request.get("/sitemap.xml");
   expect(res.status()).toBe(200);
   const body = await res.text();
@@ -103,7 +103,7 @@ test("sitemap.xml lists the public pages (A4-4: it used to 307 to /sign-in)", as
   expect(body).toContain("/design-partner</loc>");
 });
 
-test("an unknown URL renders a real 404, not a sign-in redirect (A4-4)", async ({ page }) => {
+test("an unknown URL renders a real 404, not a sign-in redirect", async ({ page }) => {
   const response = await page.goto("/this-does-not-exist");
   expect(response?.status()).toBe(404);
   await expect(page).toHaveURL(/\/this-does-not-exist$/);

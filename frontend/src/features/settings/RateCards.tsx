@@ -13,7 +13,7 @@ import type { RateCard } from "@/lib/api/client";
 import { COST_TYPES, RATE_BASES, type CostType, type RateBasis } from "@/lib/domain";
 import { money, pct } from "@/lib/format";
 
-/** A starting point for the empty state (audit item 7): round numbers, clearly marked as examples. */
+/** A starting point for the empty state: round numbers, clearly marked as examples. */
 const EXAMPLE_RATE_CARDS: { cost_type: CostType; scope: "CONTAINER"; basis: RateBasis; amount: string }[] = [
   { cost_type: "OCEAN_FREIGHT", scope: "CONTAINER", basis: "FLAT", amount: "800.00" },
   { cost_type: "THC", scope: "CONTAINER", basis: "FLAT", amount: "250.00" },

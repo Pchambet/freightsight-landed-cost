@@ -25,9 +25,10 @@ from typing import Any
 
 # The SKU is the only identifier Odoo and FreightSight share, so it is what the container's cost
 # lines must carry on our side. Keep these three in step with whatever you create in FreightSight —
-# same SKU and unit price as the tyre PO line in `app.domain.sample_data` (the Odoo walkthrough reuses
-# that story rather than inventing a second one; an organization not running the tyre demo data should
-# seed this into its own, separate organization).
+# same SKU and unit price as the tyre PO line in `app.domain.sample_data` (the write-back test reuses
+# that sample data rather than inventing a second story; the steps are in docs/odoo-questions.md,
+# section 5; an organization not running the sample data should seed this into its own, separate
+# organization).
 SKU = "TYR-20555R16-91V"
 PRODUCT_NAME = "Pneu tourisme 205/55 R16 91V"
 QUANTITY = 100.0

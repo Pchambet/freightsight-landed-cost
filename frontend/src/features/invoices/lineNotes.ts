@@ -8,7 +8,7 @@ type CostTypeTranslator = (key: string) => string;
 /**
  * `invoiceCurrency` is the invoice's own currency: `arithmetic_mismatch` carries only a bare number
  * (the check is a same-currency sum, so the API never repeats the currency in it), but a bare number
- * with no symbol is exactly what audit B27 flagged ("300.00 EUR" in a French sentence) — every amount
+ * with no symbol reads badly in a sentence ("300.00 EUR" in a French sentence) — every amount
  * on screen goes through `money()`, this one included.
  */
 export function formatInvoiceNote(

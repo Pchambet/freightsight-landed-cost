@@ -345,8 +345,8 @@ export function importNewStep(resuming: boolean): WorkflowStep {
 
 /**
  * The next-step card for the import wizard itself, computed from the wizard's own client-side step
- * instead of the server-rendered "resuming or not" snapshot the page loaded with — see audit B20:
- * the card used to keep telling you to "choose a file" while you were already on the validation
+ * instead of the server-rendered "resuming or not" snapshot the page loaded with: the
+ * card used to keep telling you to "choose a file" while you were already on the validation
  * report.
  */
 export function importWizardStep(step: "upload" | "mapping" | "review" | "done", resuming: boolean, hasErrors: boolean): WorkflowStep {

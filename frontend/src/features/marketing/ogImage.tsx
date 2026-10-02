@@ -2,7 +2,7 @@ import { ImageResponse } from "next/og";
 
 /**
  * Shared 1200x630 Open Graph / Twitter card renderer for the three public marketing pages
- * (A4-3: none of them had a preview image, so a LinkedIn share showed nothing). No custom font
+ * (none of them had a preview image, so a LinkedIn share showed nothing). No custom font
  * file and no external asset fetch: satori's bundled sans face keeps this dependency-free, and
  * Next automatically reuses this image for the Twitter card too when the page sets openGraph but
  * no twitter.images (see resolve-metadata.js's inheritFromMetadata).

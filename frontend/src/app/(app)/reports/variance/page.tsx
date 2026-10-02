@@ -59,7 +59,7 @@ export default async function VariancePage({ searchParams }: { searchParams: Pro
 
   return (
     <>
-      {/* The h1 right below already says "Écarts du mois" — the breadcrumb only needs the back link (audit B21). */}
+      {/* The h1 right below already says "Écarts du mois" — the breadcrumb only needs the back link. */}
       <Breadcrumb backHref="/reports" backLabel={tr("title")} />
       <PageHeader
         title={t("title")}

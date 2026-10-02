@@ -85,7 +85,7 @@ export default function ImportWizard({
   const errors = report?.errors ?? [];
   const warnings = report?.warnings ?? [];
   // Whether a value is per unit or for the whole line is exactly what the dropdown decides, so the
-  // warning sits beside it (audit B19) once a preview has detected the ambiguity.
+  // warning sits beside it once a preview has detected the ambiguity.
   const unitColumnWarning = (field: string) => warnings.find((w) => w.code === "UNIT_COLUMN_AMBIGUOUS" && w.field === field);
   const errorRows = new Set(errors.map((e) => e.row)).size;
   const missingRequired = fields.filter((f) => f.required && !mapping[f.field]).map((f) => fieldName(f.field));
@@ -310,7 +310,7 @@ export default function ImportWizard({
                 <div key={k} className="bg-slate-50 rounded-md px-3 py-2"><div className="text-xs text-slate-500">{k}</div><div className="font-medium tabular-nums">{v}</div></div>
               ))}
             </div>
-            {/* What the reader decided about the file itself, before any row (B22/B19): a header on
+            {/* What the reader decided about the file itself, before any row: a header on
                 line 3 or a skipped totals row used to look like lost rows. */}
             {report.header_row > 1 ? <p className="text-xs text-slate-500">{t("review.headerRow", { line: report.header_row })}</p> : null}
             {report.totals_row_ignored ? <p className="text-xs text-slate-500">{t("review.totalsRowIgnored")}</p> : null}

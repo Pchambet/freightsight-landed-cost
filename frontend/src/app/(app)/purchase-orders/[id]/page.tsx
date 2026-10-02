@@ -77,7 +77,7 @@ export default async function PurchaseOrderPage({ params }: Params) {
 
   return (
     <>
-      {/* po.po_number is already the h1 right below — no need to repeat it in the breadcrumb (audit B21). */}
+      {/* po.po_number is already the h1 right below — no need to repeat it in the breadcrumb. */}
       <Breadcrumb backHref="/purchase-orders" backLabel={t("breadcrumb")} />
       <PageHeader
         title={po.po_number}

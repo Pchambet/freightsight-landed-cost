@@ -56,7 +56,7 @@ export async function addCost(input: {
   revalidate: string;
 }): Promise<ActionResult<{ id: string }>> {
   // Every other action had it: without it a cost typed in a tab left on another organization was
-  // written into whichever organization the session cookie held (N2).
+  // written into whichever organization the session cookie held.
   await protectAction();
   const amount = normalizeAmount(input.amount);
   if (amount === null) {

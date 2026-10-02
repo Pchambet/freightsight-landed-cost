@@ -53,7 +53,7 @@ export default function AllocationPanel({ containerId, poId, report }: { contain
   const isPreview = preview !== null;
   // Import VAT is recoverable and excluded from the landed cost the report totals (see
   // `reporting/service._by_cost_type`), so it does not belong among the charge columns that sum
-  // into "Landed" — see audit A1 §9. It gets its own visually distinct column instead.
+  // into "Landed". It gets its own visually distinct column instead.
   const chargeCostTypes = Object.keys(shown.by_cost_type).filter((ct) => ct !== "IMPORT_VAT");
   const hasVat = Object.prototype.hasOwnProperty.call(shown.by_cost_type, "IMPORT_VAT");
 

@@ -23,12 +23,12 @@ export const site = {
   // on Vercel to replace the e-mail fallback.
   bookingUrl: process.env.NEXT_PUBLIC_BOOKING_URL || mailto("FreightSight – 20 minutes"),
   // Low-commitment CTA next to every booking button: no call to book, just a real invoice in and a
-  // landed cost back within 24h (A4-8 / A4 rewrite proposal).
+  // landed cost back within 24h.
   quickCheckUrl: mailto(
     "FreightSight – une facture, un coût rendu sous 24h",
     "Bonjour Pierre,\n\nVoici une facture transitaire et le bon de commande correspondant (en pièce jointe).\n\nPouvez-vous me renvoyer le coût rendu par référence ?\n\nMerci,",
   ),
-  // Same address, for the /securite questionnaire link (A4 audit A4-7: it pointed at the booking
+  // Same address, for the /securite questionnaire link (it pointed at the booking
   // page, not an inbox a DPO can write to).
   securityQuestionnaireUrl: mailto("Questionnaire sécurité FreightSight"),
   appHome: "/overview",

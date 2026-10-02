@@ -44,7 +44,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
   const ratio = (v: number) => new Intl.NumberFormat(locale === "fr" ? "fr-FR" : "en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v);
   const csvQuery = new URLSearchParams({ locale, ...(period.period_from ? { period_from: period.period_from } : {}), ...(period.period_to ? { period_to: period.period_to } : {}) }).toString();
   // Why a line's "avoided" is what it is, from the API's rule code and its own figures — no longer a
-  // parse of an English sentence (audit B30).
+  // parse of an English sentence.
   const dndRuleText = (l: { rule_code: string; days?: number | null; daily_rate?: string | null }) => {
     switch (l.rule_code) {
       case "DND_AVOIDED_ESTIMATED":
@@ -58,8 +58,8 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
     }
   };
 
-  // `DndAtRiskLine.rule`, unlike the line above, is already one of three machine codes (the reporting
-  // lane fixed the English-sentence leak here — audit B30) — the front just formats its own params
+  // `DndAtRiskLine.rule`, unlike the line above, is already one of three machine codes (the API no
+  // longer sends an English sentence here) — the front just formats its own params
   // (`last_free_day`, `dnd_risk`) into the matching sentence instead of pattern-matching prose.
   const atRiskRuleText = (row: { rule: string; last_free_day: string | null; dnd_risk: string }) => {
     switch (row.rule) {

@@ -66,7 +66,7 @@ export default async function ImportsPage() {
                   // The anchor a « file already imported » refusal leads to.
                   <tr key={j.id} id={`import-${j.id}`} className="scroll-mt-24 target:bg-amber-50">
                     <td className={`${td} text-slate-600`}>{dateShort(j.created_at, locale)}</td>
-                    {/* An ERP-synced job has no uploaded file: its synthetic name is not shown as one (B23). */}
+                    {/* An ERP-synced job has no uploaded file: its synthetic name is not shown as one. */}
                     <td className={td}>{j.source === "erp_sync" ? t("source.erp_sync") : (j.original_filename ?? tc("empty"))}</td>
                     <td className={`${td} text-xs text-slate-600`}>{t(`kind.${j.kind}`)}</td>
                     <td className={td}>

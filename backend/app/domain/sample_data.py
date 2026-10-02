@@ -9,7 +9,7 @@ duty is estimated the same way, from a `duty_rate` carried on each PO line rathe
 because the rate depends on the tariff heading of what is in the box, not on a price list. Nothing here
 is an ACTUAL cost: the demo invoice (`docs/demo/fixtures/facture-transdemo-demo.pdf`) is what brings the
 actuals, superseding these estimates one for one and producing a real, explainable variance — see
-`backend/tests/test_demo_story.py`, which pins every figure this docstring and the demo scripts quote.
+`backend/tests/test_demo_story.py`, which pins every figure this docstring and the README quote.
 
 The DEMURRAGE rate card (for the "surestaries évitées" report) is added only after both containers are
 estimated: `estimate_container` does not know that demurrage is a penalty rather than a landed cost, so
@@ -54,7 +54,7 @@ FREE_DAYS_DEMURRAGE = 7
 #: Rate cards, one FLAT amount per container — realistic 2026 forwarder pricing for a Ningbo → Le Havre
 #: FCL move (~4 000 $ Shanghai-Rotterdam per 40', ≈ 3 700 € at a
 #: ~0.925 USD/EUR rate assumed for the demo, not looked up live). THC, customs clearance and haulage
-#: sit mid-band of what item 3 of the audit asked for (200-300 € / 80-150 € / 300-600 €).
+#: sit mid-band of the ranges assumed for this lane (200-300 € / 80-150 € / 300-600 €).
 OCEAN_FREIGHT_RATE = Decimal("3700.00")
 THC_RATE = Decimal("250.00")
 CUSTOMS_BROKERAGE_RATE = Decimal("120.00")
@@ -72,9 +72,10 @@ TYRE_DUTY_RATE = Decimal("0.045")
 MAT_DUTY_RATE = Decimal("0.065")
 
 #: The demo invoice (docs/demo/fixtures/facture-transdemo-demo.pdf): Transdemo's ACTUAL figures for
-#: MSCU4821990, which the presenter confirms whole. Each amount replaces the matching ESTIMATE above
-#: one for one (same cost type, same container) — see `estimate_container`'s supersession — so
-#: confirming every line is safe and produces one real variance per cost type, not a duplicate.
+#: MSCU4821990, meant to be confirmed whole (README, "Try it"). Each amount replaces the matching
+#: ESTIMATE above one for one (same cost type, same container) — see `estimate_container`'s
+#: supersession — so confirming every line is safe and produces one real variance per cost type, not a
+#: duplicate.
 #: These are not round numbers on purpose: a real forwarder's invoice never lands on the estimate.
 DEMO_INVOICE_NUMBER = "FA-2026-0912"
 DEMO_INVOICE_VENDOR = "TRANSDEMO SAS"

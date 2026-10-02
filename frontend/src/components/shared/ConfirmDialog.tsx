@@ -5,7 +5,7 @@ import { btnPrimary, btnSecondary } from "@/components/layout/AppShell";
 import { useFocusTrap } from "@/hooks/useFocusTrap";
 
 /**
- * A blocking confirmation for a destructive, one-click action (see audit B16: deleting a cost used
+ * A blocking confirmation for a destructive, one-click action (deleting a cost used
  * to happen at once, with no confirmation and no way back). Focus moves to Cancel on open, Tab is
  * trapped inside, Escape and the backdrop both cancel, and focus returns to whatever opened it.
  */

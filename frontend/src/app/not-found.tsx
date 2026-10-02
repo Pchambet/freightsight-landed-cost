@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { SearchX } from "lucide-react";
 
-// Root 404: covers any URL that matches no route at all, marketing or app (A4-4). The (app) group
+// Root 404: covers any URL that matches no route at all, marketing or app. The (app) group
 // has its own not-found for a signed-in visitor inside the product; this one is what an anonymous
 // visitor or a search crawler gets for a stale or mistyped link, so it stays in French and links
 // back to the public site, not to /containers.

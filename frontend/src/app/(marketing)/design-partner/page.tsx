@@ -22,7 +22,7 @@ export const metadata: Metadata = {
 /**
  * Printable one-pager (A4). The marketing header and footer hide on print, so the logo below is
  * screen-hidden and print-only: on screen the persistent header above already shows it, and
- * showing it twice on the same page read badly (A4 audit, row A8).
+ * showing it twice on the same page read badly.
  */
 export default function DesignPartnerPage() {
   return (

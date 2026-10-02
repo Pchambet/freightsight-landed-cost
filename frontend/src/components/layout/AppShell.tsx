@@ -7,7 +7,7 @@ export async function AppShell({ children, orgName, unreadAlerts = 0, hasSampleD
   const t = await getTranslations();
   return (
     // overflow-x-hidden is the backstop for every page in this shell: several widgets (a header icon
-    // near the viewport edge, a hover tooltip centered under a narrow card — see audit B11/B43) can
+    // near the viewport edge, a hover tooltip centered under a narrow card) can
     // lay out wider than the viewport at 390 px without ever being visible; this guarantees the page
     // itself never scrolls sideways because of them. A table that genuinely needs to scroll still
     // does, inside its own `overflow-x-auto` container.

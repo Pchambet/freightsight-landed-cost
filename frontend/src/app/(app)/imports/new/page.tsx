@@ -29,10 +29,10 @@ export default async function NewImportPage({ searchParams }: { searchParams: Pr
   }
   return (
     <>
-      {/* The title right below already says what the page is — the breadcrumb only needs the back link (audit B21). */}
+      {/* The title right below already says what the page is — the breadcrumb only needs the back link. */}
       <Breadcrumb backHref="/imports" backLabel={ti("title")} />
       <PageHeader title={t("title")} subtitle={t("subtitle")} />
-      {/* The next-step card lives inside the wizard now: it has to follow the live client step (audit B20), which this server page cannot see. */}
+      {/* The next-step card lives inside the wizard now: it has to follow the live client step, which this server page cannot see. */}
       <div id="wizard" className="scroll-mt-6">
         {kinds.length ? (
           <ImportWizard kinds={kinds} initialJob={initial} initialKind={initialKind} baseCurrency={org.data?.base_currency ?? "EUR"} />
