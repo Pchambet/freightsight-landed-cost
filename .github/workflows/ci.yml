@@ -27,6 +27,7 @@ jobs:
           filters: |
             backend:
               - 'backend/**'
+              - 'README.md'
               - '.github/workflows/ci.yml'
             frontend:
               - 'frontend/**'
