@@ -81,8 +81,7 @@ Ce qui a changé dans le lecteur :
 - **Le vrai chiffre viendra de factures réelles.** Le banc sait les scorer : déposer `nom.pdf` et
   `nom.json` (numéro, date, devise, totaux, lignes attendues) dans
   `backend/tests/fixtures/invoices_real/` — dossier ignoré par git, rien ne quitte le poste. Dix
-  factures de trois transitaires différents, obtenues du premier design partner, valent plus que tout
-  ce corpus.
+  factures de trois transitaires différents valent plus que tout ce corpus.
 - **Un PDF scanné n'est pas lu du tout** (`NO_TEXT_LAYER`) : il n'a pas de couche texte, et le
   lecteur n'a pas d'OCR. C'est dit à l'écran, avec la saisie manuelle comme issue. À traiter ensuite :
   OCR local (Tesseract) avant les règles, mesuré par ce même banc sur des images des 55 PDF.

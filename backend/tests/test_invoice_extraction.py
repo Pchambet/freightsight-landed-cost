@@ -485,7 +485,7 @@ def test_the_patterns_are_always_available_and_the_model_only_with_a_key(
 
 def test_a_realistic_forwarder_invoice_reads_exactly(db: Session, org: Organization) -> None:
     """The one fixture nobody wrote to be easy: a French forwarder invoice laid out like a real one,
-    generated for a walkthrough, which caught two bugs the hand-written lines did not: a header line
+    generated as a demo document, which caught two bugs the hand-written lines did not: a header line
     naming a B/L and a container size, and a VAT line stating its taxable base."""
     from pathlib import Path
 

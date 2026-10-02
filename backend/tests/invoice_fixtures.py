@@ -139,8 +139,8 @@ FRENCH_WITH_DISCOUNT = [
     "Total TTC                                                          2 760,00 EUR",
 ]
 
-#: The header the audit found: the forwarder prints the day's rate for the origin leg, and the
-#: whole invoice was being read as dollars because of it.
+#: A header with an exchange rate: the forwarder prints the day's rate for the origin leg, and the
+#: whole invoice used to be read as dollars because of it.
 EXCHANGE_RATE_IN_HEADER = [
     "ACME TRANSIT SAS",
     "Taux de change USD/EUR 1,0850",

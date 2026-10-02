@@ -1,4 +1,4 @@
-"""An invoice dropped from a container's page, or in the first-file walkthrough, says which container
+"""An invoice dropped from a container's page, or on the guided first-file page, says which container
 it is about: the lines on which no container can be read are attached to that one.
 
 Revision ID: 0027

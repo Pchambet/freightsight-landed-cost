@@ -1,5 +1,5 @@
-"""What the "first file in ten minutes" walkthrough asks of the API: an order with its supplier by
-name, conflicts that say what they collided with, and an invoice that knows which container it is about."""
+"""What the guided first file (the /start page) asks of the API: an order with its supplier by name,
+conflicts that say what they collided with, and an invoice that knows which container it is about."""
 
 from __future__ import annotations
 

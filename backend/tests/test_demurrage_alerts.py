@@ -1,9 +1,9 @@
 """The chain the product is sold on: a box lands, a clock starts, and somebody is told in time.
 
-Every test here is a defect that reached a design partner's inbox — or, worse, did not. The order is
-the order of the audit: an alert that was never raised because the band reached its final value at
-ingestion, an alert said once and never repeated while the money ran, free days counted in the wrong
-calendar, and a transhipment discharge starting the clock for a box still at sea.
+Every test here is a defect that would reach a user's inbox — or, worse, would not: an alert that
+was never raised because the band reached its final value at ingestion, an alert said once and never
+repeated while the money ran, free days counted in the wrong calendar, and a transhipment discharge
+starting the clock for a box still at sea.
 """
 
 from __future__ import annotations
