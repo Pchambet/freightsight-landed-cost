@@ -227,8 +227,8 @@ npm run e2e              # Playwright smoke tests of the public pages, hermetic
 ```
 
 Production must connect to Postgres as the non-superuser role `freightsight_app` created by migration
-0003, otherwise Row Level Security is bypassed. CI runs the same commands against a Postgres 18 service
-(production runs 18; the local compose file still ships 17).
+0003, otherwise Row Level Security is bypassed. CI runs the same commands against a Postgres 18 service,
+the version production and the local compose file also run.
 
 ## Repository layout
 
