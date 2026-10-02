@@ -45,7 +45,7 @@ Lancer le banc : `cd backend && PYTHONPATH=tests .venv/bin/python -m bench_invoi
 | Lignes lues — 7 pièges (à la première mesure, avant correction) | — | 19 / 24 (79 %), 7 inventées, **2 erreurs silencieuses** |
 | Lignes lues — 7 pièges (après correction) | — | 24 / 24, 0 inventée, 0 silencieuse |
 | Factures lues sans aucune erreur | 11 / 48 | 55 / 55 |
-| Erreurs silencieuses | 0 | 0 |
+| Erreurs silencieuses — 9 familles, 48 factures | 0 | 0 |
 
 Ce qui a changé dans le lecteur :
 

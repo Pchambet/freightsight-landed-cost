@@ -18,19 +18,20 @@ purchase-order line, in Decimal, to the cent, with the method written on each co
 ## TL;DR
 
 - **The question.** An importer pays one forwarder invoice for a container that carries several
-  products. What did *each* product actually cost, landed? Spreadsheets split everything pro rata of
-  value; for bulky, cheap goods that is wrong by double digits.
+  products. What did *each* product actually cost, landed? The allocation key alone (value, volume,
+  weight…) moves a product's unit cost by double digits, and a spreadsheet split pro rata of value never
+  makes that choice explicit.
 - **Worked example below, run on the real engine:** on the same 26,558.79 € container, charging freight
-  by volume instead of by value moves a tyre's landed cost from 17.98 € to 20.34 € (+2.37 €, +13 %) and
+  by volume instead of by value moves a tyre's landed cost from 17.98 € to 20.34 € (+2.36 €, +13 %) and
   a floor mat's from 26.16 € to 22.61 € (−3.55 €, −14 %). Totals are identical; the margin per product
   is not.
 - **Allocation engine:** a pure function (no I/O), two passes because EU customs duty is assessed on the
   CIF value, largest-remainder rounding so the parts of every charge sum exactly to the charge, and
   anything that cannot be allocated is reported with its cause, never guessed.
 - **996 backend tests** (752 test functions) run against a real PostgreSQL 18 with Row Level Security:
-  994 pass locally in 2 to 5 minutes, 2 skip without a live Odoo or a `pg_dump` 18 client (CI installs
-  the latter). CI also type-checks (mypy, strict on the costing core), audits dependencies, checks
-  migrations and runs gitleaks.
+  994 pass locally in 2 to 5 minutes, 2 skip (no live Odoo; the backup round-trip needs a directly
+  reachable Postgres and a `pg_dump` 18 client, both provided in CI). CI also type-checks (mypy, strict
+  on the costing core), audits dependencies, checks migrations and runs gitleaks.
 - **Invoice reading bench:** a rule-based PDF reader scored on 55 generated forwarder invoices
   (9 layout families + 7 traps written blind): 302 / 302 lines, 0 invented, **0 silent errors**. The
   first blind run of the traps scored 79 % with 2 silent errors; the [bench write-up](docs/invoice-reading-bench.md)
@@ -56,11 +57,11 @@ and 500 EVA floor mats from two purchase orders, and the five actual lines of th
 Container landed cost: **26,558.79 €** under all three policies (the parts of every charge sum to the cent).
 <!-- worked-example:end -->
 
-The tyres fill 37.5 of the 42.5 m³ loaded but only 51 % of the value. Under a value split, the mats
-subsidise the tyres' freight; under a volume split, the tyres carry it, and because ocean freight enters
-the customs value, they also carry more of the duty. Which policy is right is a business decision (what
-drives the charge?), which is why FreightSight writes the method on each cost and shows a "what if"
-preview before anything is saved. The middle column is exactly what the application displays for this
+The tyres fill 37.5 of the 42.5 m³ loaded but only 51 % of the value. If space is what drives the freight
+charge, a value split has the mats subsidise the tyres' freight; a volume split puts it on the tyres, and
+because ocean freight enters the customs value, they also carry more of the duty. Which policy is right
+is a business decision (what drives the charge?), which is why FreightSight writes the method on each
+cost and shows a "what if" preview before anything is saved. The middle column is exactly what the application displays for this
 container: `backend/tests/test_demo_story.py` pins 17.9750 € and 26.1550 € through the API and a real
 database, and `backend/tests/test_worked_example.py` fails if this table drifts from
 `backend/scripts/worked_example.py`.
@@ -213,7 +214,7 @@ cd backend
 uv sync --all-groups
 uv run pytest            # throwaway Postgres 18 via testcontainers (Docker); 2-5 min on a laptop
 uv run ruff check . && uv run ruff format --check . && uv run mypy .
-PYTHONPATH=tests uv run python -m bench_invoices_scoring   # invoice-reading bench, prints the score table
+PYTHONPATH=tests uv run python -m bench_invoices_scoring   # invoice-reading bench, prints the score table (labels in French)
 uv run alembic revision --autogenerate -m "describe change"
 
 cd ../frontend

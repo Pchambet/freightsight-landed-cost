@@ -47,7 +47,7 @@ is read today must still be read tomorrow.
 | Lines read, 7 traps, first blind measurement | — | 19 / 24 (79 %), 7 invented, **2 silent errors** |
 | Lines read, 7 traps, after the fixes | — | 24 / 24, 0 invented, 0 silent |
 | Invoices read with no error at all | 11 / 48 | 55 / 55 |
-| Silent errors | 0 | 0 |
+| Silent errors, 9 families, 48 invoices | 0 | 0 |
 
 Re-run on 2 October 2026: 55 / 55 invoices, 302 / 302 lines, 0 invented, 239 / 239 cost types, 0 silent
 errors.
