@@ -2,9 +2,9 @@
 
 *[English version](invoice-reading-bench.md)*
 
-« Envoyez-nous une facture, on vous rend la ventilation » est l'offre d'entrée. Elle repose sur un
-lecteur à règles (`backend/app/adapters/extraction/regex_extractor.py`) qui doit fonctionner sans clé,
-sans réseau et sans envoyer le document à qui que ce soit. Jusqu'au 17 septembre 2026 sa qualité
+La boîte de réception des factures repose sur un lecteur à règles
+(`backend/app/adapters/extraction/regex_extractor.py`) qui doit fonctionner sans clé, sans réseau et
+sans envoyer le document à qui que ce soit. Jusqu'au 17 septembre 2026 sa qualité
 n'était mesurée nulle part : un seul PDF d'essai dans le dépôt. Ce document décrit le banc qui la
 mesure désormais, les chiffres, et leurs limites.
 
@@ -13,15 +13,16 @@ mesure désormais, les chiffres, et leurs limites.
 `backend/tests/bench_invoices_*.py` — 55 PDF construits comme de vrais tableaux (chaque cellule
 posée à sa place, montants alignés à droite, plusieurs pages), pas des lignes de texte :
 
-- **9 familles de mises en page** rencontrées sur des factures d'import françaises, chacune rendue
-  pour 4 factures (libellés connus, libellés qu'aucune liste ne connaît, quantités > 1, fret en
-  dollars converti sur la ligne) : quatre colonnes (désignation, quantité, PU, montant) ; code TVA
-  après le montant (Sage, EBP) ; taxable / non taxable côte à côte ; devise convertie sur la ligne ;
-  relevé d'armateur en anglais ; débours à part des prestations ; avoir ; plusieurs conteneurs sur
-  une facture ; tableau sur deux pages avec report.
+- **9 familles de mises en page** rencontrées sur des factures d'import françaises. Cinq sont
+  déclinées en 4 factures (libellés connus, libellés qu'aucune liste ne connaît, quantités > 1, fret
+  en dollars converti sur la ligne) : quatre colonnes (désignation, quantité, PU, montant) ; code TVA
+  après le montant (Sage, EBP) ; taxable / non taxable côte à côte ; débours à part des prestations ;
+  tableau sur deux pages avec report. Les quatre autres comptent une facture chacune : devise
+  convertie sur la ligne ; relevé d'armateur en anglais ; avoir ; plusieurs conteneurs sur une facture.
 - **Chaque facture deux fois** : dessinée ligne par ligne, puis colonne par colonne — ce que font les
   logiciels qui construisent un tableau avec des cadres de texte. Le texte sort alors du PDF avec
-  tous les libellés d'abord et tous les montants ensuite.
+  tous les libellés d'abord et tous les montants ensuite. Soit (5 × 4 + 4) × 2 = 48 factures de
+  familles.
 - **7 pièges**, écrits à part et avant de regarder si le lecteur s'en sortait : taux de TVA imprimé à
   droite du montant, libellé sur deux lignes, espace insécable et symbole €, montants avec centimes
   au-dessus du tableau (valeur en douane, poids, cours), ligne de TVA dans le tableau, TVA import en

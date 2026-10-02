@@ -2,9 +2,8 @@
 
 *[Version française](invoice-reading-bench.fr.md)*
 
-FreightSight's entry offer is "send us one invoice, get the allocation back". It rests on a rule-based
-reader (`backend/app/adapters/extraction/regex_extractor.py`) that must work with no API key, no network
-and without sending the document anywhere. Until 17 September 2026 its quality was not measured at all:
+The invoice inbox relies on a rule-based reader (`backend/app/adapters/extraction/regex_extractor.py`)
+that must work with no API key, no network and without sending the document anywhere. Until 17 September 2026 its quality was not measured at all:
 the repository held a single sample PDF. This page describes the bench that now measures it, the
 numbers, and their limits.
 
@@ -13,15 +12,15 @@ numbers, and their limits.
 `backend/tests/bench_invoices_*.py` generates 55 PDFs built like real tables (each cell placed where it
 belongs, amounts right-aligned, several pages), not lines of text:
 
-- **9 layout families** seen on French import invoices, each rendered as 4 invoices (known labels,
-  labels no list knows, quantities > 1, freight in dollars converted on the line): four columns
-  (description, quantity, unit price, amount); VAT code after the amount (Sage, EBP); taxable and
-  non-taxable side by side; currency converted on the line; carrier statement in English;
-  disbursements separate from services; credit note; several containers on one invoice; a table running
-  over two pages with a carried-forward subtotal.
+- **9 layout families** seen on French import invoices. Five come in 4 variants (known labels, labels
+  no list knows, quantities > 1, freight in dollars converted on the line): four columns (description,
+  quantity, unit price, amount); VAT code after the amount (Sage, EBP); taxable and non-taxable side by
+  side; disbursements separate from services; a table running over two pages with a carried-forward
+  subtotal. The other four come as one invoice each: currency converted on the line, carrier statement
+  in English, credit note, several containers on one invoice.
 - **Every invoice twice**: drawn row by row, then column by column, which is what tools that build a
   table from text boxes do. The text then comes out of the PDF with every label first and every amount
-  after.
+  after. That makes (5 × 4 + 4) × 2 = 48 family invoices.
 - **7 traps**, written separately and *before* checking whether the reader handled them: VAT rate
   printed to the right of the amount, a label wrapped over two lines, non-breaking spaces and the €
   sign, amounts with cents above the table (customs value, weight, exchange rate), a VAT line inside
