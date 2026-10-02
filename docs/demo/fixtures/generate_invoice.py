@@ -3,7 +3,7 @@
 
 The figures and wording live in one place, `app.domain.sample_data.demo_invoice_lines()`, so this
 script and `backend/tests/test_demo_story.py` can never quote different numbers for the same invoice
-(the failure the 2026-09-17 audit found: the sales script said 13,91 €, the screen said 11,80 €).
+(the failure the 2026-09-17 audit found: the demo walkthrough said 13,91 €, the screen said 11,80 €).
 
 The invoice date defaults to 3 days before the day this script runs, which is what keeps the fixture
 plausible next to a container whose ETD/ETA/discharge dates are always computed relative to "today"

@@ -1,6 +1,6 @@
-"""Pins the figures quoted in the sales demo script to the sample data and the demo invoice, so the
-sales script can never drift from the code again (the failure the audit found: the script promised
-13,91 € and the screen showed 11,80 €).
+"""Pins the figures quoted in the demo walkthrough (and in the README's worked example) to the sample
+data and the demo invoice, so a quoted figure can never drift from the code again (the failure the audit
+found: the walkthrough promised 13,91 € and the screen showed 11,80 €).
 
 Two states, both asserted against the real API — sample data loaded, then the demo invoice confirmed
 whole (the audit's fix: no "confirm only THC + customs" trap, because nothing here is pre-existing

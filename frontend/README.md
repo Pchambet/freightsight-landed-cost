@@ -1,36 +1,41 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# FreightSight web app
 
-## Getting Started
+Next.js 16 (App Router, React Server Components) front end for the FreightSight API. The browser never
+calls the API directly: pages and server actions call it on the server with the user's Clerk session token,
+through a typed client generated from the backend's OpenAPI schema.
 
-First, run the development server:
+## Layout
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+```
+src/
+├── app/
+│   ├── (marketing)/     public pages: landing, /securite, /design-partner
+│   ├── (app)/           signed-in application: containers, purchase orders, imports, invoices,
+│   │                    reports, SKUs, alerts, audit log, periods, settings
+│   ├── r/[token]/       read-only shared report links (noindex)
+│   └── sign-in, sign-up, choose-organization
+├── features/            one folder per domain: data loading, server actions, components
+├── components/          shared UI, layout and chart components
+├── lib/api/             openapi-fetch client + `schema.d.ts` generated from ../backend/openapi.json
+├── i18n/                next-intl config; strings in ../messages/ (French default, English)
+└── proxy.ts             Clerk middleware: optimistic redirects only; every page calls auth.protect()
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Run
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+npm install
+# .env.local: API_URL and the Clerk keys, see "Getting started" in the root README
+npm run dev                  # http://localhost:3000
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Signed-in pages need a Clerk development instance with Organizations enabled (free tier); the
+[root README](../README.md) lists the variables.
 
-## Learn More
+## Checks
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+npm run lint && npm run typecheck && npm run build
+npm run api:types            # after any backend API change: regenerates src/lib/api/schema.d.ts
+npm run e2e                  # Playwright smoke tests of the public pages, hermetic (see e2e/README.md)
+```
