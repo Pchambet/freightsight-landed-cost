@@ -1,5 +1,17 @@
 # Connecteur Odoo — ce que j'ai vu sur un vrai Odoo, et ce qui reste ouvert
 
+> **In English, in short.** This is the engineering log of the Odoo 17 connector, kept in French and
+> dated as it was written. Everything below was exercised against a real Odoo 17 instance (local
+> `odoo:17` + `postgres:16`, `purchase` and `stock_landed_costs` modules); the test fixtures are
+> responses captured from it, not invented. What the real instance taught: a purchase line's quantity is
+> in the line's unit of measure (20 *dozens* of a product weighed per piece), so the adapter converts it
+> before any weight-based allocation; `hs_code` does not exist on `product.product` in Community, so the
+> adapter asks `fields_get` first; a wrong password returns `False` instead of raising; and a landed
+> cost's allocation lines cannot be set at creation, only overwritten after Odoo computes its own
+> (section 6). What is not verified: Odoo API keys instead of a password, Odoo Online rate limits, large
+> databases, and the Odoo screen itself (everything was checked by reading records back over XML-RPC).
+> The connector never validates a landed cost: posting entries in someone's books is their decision.
+
 **Vérifié pour de vrai**, pas seulement sur des fixtures : `odoo:17` + `postgres:16` en local,
 base `fstest` initialisée avec le module `purchase` et ses données de démonstration, authentification
 XML-RPC et lecture réelles (`17.0-20260908`, 10 commandes, uid 2). Les fixtures de test
@@ -39,9 +51,9 @@ ligne est montrable à un humain — c'est ce que fait `_fault_reason`.
 - **Les grosses bases.** Les commandes sont maintenant lues par pages de 200 avec un **curseur sur
   l'id** (jamais un offset : le personnel du client continue de confirmer des commandes pendant la
   synchronisation, et un offset sauterait ce qui s'insère entre deux pages). Les lignes, produits et
-  UdM d'une même page restent lus en un appel chacun. Le filtre `write_date >=` existe dans le port
-  mais **rien ne s'en sert encore** : chaque synchronisation relit tout. → L'import incrémental est
-  le prochain geste, avant le premier client à gros volume.
+  UdM d'une même page restent lus en un appel chacun. La synchronisation est incrémentale (filtre
+  `write_date >=` depuis la dernière synchronisation réussie, avec un recouvrement ; `full=true` relit
+  tout). → Le comportement sur une base de plusieurs milliers de commandes n'est pas mesuré.
 
 ## 3. Choix de conception
 
@@ -70,7 +82,7 @@ ligne est montrable à un humain — c'est ce que fait `_fault_reason`.
 - Le job traite chaque organisation dans sa propre transaction : l'Odoo cassé d'un client n'empêche
   pas les autres de se synchroniser.
 - **Une commande annulée est marquée, jamais supprimée** (`purchase_orders.status = CANCELLED`,
-  `cancelled_at`) — décision provisoire prise avec freightsight-fa, à confirmer avec un partenaire.
+  `cancelled_at`) — décision provisoire, à confirmer avec un partenaire.
   Elle peut déjà porter des coûts et des conteneurs, et la supprimer réécrirait un coût de revient en
   silence. Une commande annulée que nous n'avons **jamais vue** n'est pas créée : elle n'a rien à
   nous dire. Le statut ne change rien à la ventilation : les chargements existants continuent de
@@ -131,7 +143,7 @@ catégorie de produit en FIFO + valorisation automatisée, commande d'achat conf
 validée (WH/IN/00007), puis `stock.landed.cost` créée par notre code, relue, et vérifiée ligne à
 ligne. Les fixtures de test sont les réponses de cette instance.
 
-## 12. La réponse à la question ouverte : on ne peut pas poser les ventilations à la création
+## 6. La réponse à la question ouverte : on ne peut pas poser les ventilations à la création
 
 `valuation_adjustment_lines` **n'est pas exploitable en création** : Odoo les calcule lui-même (il en
 a créé une à la création, puis l'a remplacée au `compute_landed_cost`). En revanche
@@ -156,7 +168,7 @@ Conséquence de conception : **une `cost_lines` par coût réel**, avec pour mon
 ventilations sur ce conteneur — ainsi `amount_total` de la landed cost égale la somme des
 ventilations, et le comptable ne voit pas un total qui ne correspond pas à ses lignes.
 
-## 13. Ce qui bloque, et qu'on refuse avant d'écrire
+## 7. Ce qui bloque, et qu'on refuse avant d'écrire
 
 - **Produit non valorisé en coût réel.** Odoo refuse la landed cost à la validation si la catégorie
   n'est pas en valorisation automatisée avec FIFO ou coût moyen — c'est-à-dire **après** que nous
@@ -171,7 +183,7 @@ ventilations, et le comptable ne voit pas un total qui ne correspond pas à ses 
 - **Coûts déjà poussés** : un second appel renvoie le premier `erp_pushes`, il n'écrit pas un
   deuxième document dans les livres de quelqu'un.
 
-## 13 bis. La TVA import ne part jamais dans Odoo (audit externe, 10 septembre 2026)
+## 8. La TVA import ne part jamais dans Odoo (10 septembre 2026)
 
 `_allocations` ne filtrait que sur `status is ACTUAL`. Une TVA import facturée — allouée pour la vue
 trésorerie mais **récupérable**, donc exclue du coût de revient partout ailleurs — serait donc partie
@@ -180,7 +192,7 @@ Corrigé en réutilisant `engine.EXCLUDED_FROM_LANDED`, la liste du moteur lui-m
 ici aurait dérivé de la première au premier type de coût ajouté. Test : conteneur avec fret + TVA
 import → l'aperçu ne montre que le fret, et le total aussi.
 
-## 13 ter. Les bloquants sont traduisibles
+## 9. Les bloquants sont traduisibles
 
 Chaque bloquant porte maintenant `params`, les valeurs dynamiques de sa phrase, à côté du `message`
 anglais qui ne bouge pas (les clients API le lisent). Un écran écrit donc sa propre phrase dans sa
@@ -197,7 +209,7 @@ propre langue au lieu d'afficher la nôtre en dessous d'un titre traduit.
 | `already_pushed` | `existing` (liste jointe par « , » depuis le push différentiel) |
 
 `partially_pushed`, introduit le 12 septembre pour refuser le double comptage, **a été retiré** le
-jour même : le push différentiel le rend sans objet. Voir section 15 bis.
+jour même : le push différentiel le rend sans objet. Voir section 11.
 
 Deux conventions : les listes sont **déjà jointes par « , »** (une chaîne, pas un tableau), et un SKU
 absent vaut `""` — c'est à l'écran de décider si ça se dit « sans SKU » ou « SKU manquant », pas à
@@ -208,7 +220,7 @@ trouvée », et aucun écran ne peut écrire deux phrases différentes à partir
 traduction : « aucune réception pour P00012 » et « 2 réceptions correspondent » ne sont pas la même
 information.
 
-## 15. Un push interrompu se reprend, il ne se répète pas (12 septembre 2026)
+## 10. Un push interrompu se reprend, il ne se répète pas (12 septembre 2026)
 
 Créer le brouillon chez le client et l'enregistrer chez nous sont **deux écritures dans deux
 systèmes**. Entre les deux, il y a une fenêtre : `create_landed_cost` part d'abord, l'`ErpPush` est
@@ -247,14 +259,14 @@ n'adopte pas ce brouillon. (`compute_landed_cost` recrée les lignes de ventilat
 ids à chaque appel — c'est pour ça qu'on réapplique notre split après, à l'adoption comme à la
 création.)
 
-## 15 bis. Le push différentiel (12 septembre 2026)
+## 11. Le push différentiel (12 septembre 2026)
 
 **Le problème.** `plan()` recalculait sur *tous* les coûts réels du conteneur, et seul un ensemble
 **exactement** identique était bloqué. Fret poussé, puis facture de douane, second push → un
 deuxième document portant fret **+** douane. Une landed cost **s'ajoute** à la valorisation du
 stock, elle ne la remplace pas : le fret était imputé deux fois à la marchandise, dans les livres de
 quelqu'un d'autre, là où ce n'est pas nous qui l'aurions vu. Bloqué d'abord (`partially_pushed`),
-puis tranché par Pierre : on pousse la différence.
+puis tranché : on pousse la différence.
 
 **Ce que ça donne.** Chaque push ne porte que les coûts qu'aucun `erp_pushes` vivant ne porte
 encore. L'aperçu montre **tous** les coûts, chacun avec `pushed_as` (le document qui le porte déjà,
@@ -274,7 +286,7 @@ poussé : c'est de l'histoire, et savoir si sa ligne correspond encore aujourd'h
 **Un double-clic reste sans danger** : quand il ne reste rien à pousser, le POST renvoie le dernier
 push existant (201) au lieu d'une erreur. C'est l'aperçu qui porte le bloquant `already_pushed`.
 
-## 15 ter. Oublier un push, et pourquoi ce n'est pas une suppression
+## 12. Oublier un push, et pourquoi ce n'est pas une suppression
 
 `DELETE /containers/{id}/erp/pushes/{push_id}?reason=…` **marque** la ligne (`forgotten_at`,
 `forgotten_reason`, `forgotten_by`, migration 0015) et écrit une entrée d'audit `erp.push_forgotten`.
@@ -301,7 +313,7 @@ Il nettoie les documents qu'il a créés, quoi qu'il arrive.
 **Ce qui reste ouvert.** Un conteneur à plusieurs réceptions est toujours refusé (`multiple_receipts`).
 Le produit « landed cost » et le journal sont toujours choisis automatiquement (premier par id).
 
-## 15 quater. Ce qu'un audit de relecture a trouvé après coup (12 septembre 2026, session 1)
+## 13. Deux défauts trouvés à la relecture (12 septembre 2026)
 
 Deux défauts que les tests ne pouvaient pas voir parce que le faux Odoo n'avait qu'une ligne de
 réception et que rien ne modifiait un coût après son push.
@@ -329,7 +341,7 @@ a deux mouvements pour le même produit (deux lignes de commande, ou un reliquat
 ventilation sur le premier. Odoo valorise alors ce mouvement seul. À traiter le jour où un partenaire
 a ce cas ; il se voit dans l'aperçu (les quantités).
 
-## 15 quinquies. Ce que l'audit du 17 septembre 2026 a changé
+## 14. Quatre règles revues (17 septembre 2026)
 
 Quatre règles ont bougé, toutes pour la même raison : le connecteur se grippait sur des cas banals.
 
@@ -339,7 +351,7 @@ Quatre règles ont bougé, toutes pour la même raison : le connecteur se grippa
   mouvement sont additionnés (ils étaient écrasés : Odoo recevait 333 € sur 1 000 € et refusait la
   validation sans nommer de ligne). Un SKU qui désigne plusieurs mouvements sans identifiant pour
   trancher donne le bloquant `ambiguous_line`. La somme des parts est vérifiée avant tout appel.
-- **Oublier un push dont le document est validé ou annulé.** §15 ter exigeait que le document ait
+- **Oublier un push dont le document est validé ou annulé.** La section 12 exigeait que le document ait
   disparu d'Odoo. Or un coût de réception validé ne se supprime pas : il a passé des écritures. Un
   coût corrigé le lendemain de la validation verrouillait donc le conteneur pour toujours. On peut
   désormais oublier un push dont le document est `done` ou `cancel`, contre un motif écrit, avec
@@ -363,14 +375,12 @@ en production, ports 80, 443, 8069 et 8071 seulement. Limite connue : le nom est
 fois par `xmlrpc` au moment de l'appel ; un DNS qui change de réponse entre le contrôle et l'appel
 passerait. Le transport n'offre pas de prise pour épingler l'adresse.
 
-## 16. Ce que je n'ai pas vérifié
+## 15. Ce que je n'ai pas vérifié
 
-**Je n'ai pas regardé l'écran Odoo.** Me connecter à l'interface demandait de taper un mot de passe
-dans un formulaire, ce que je ne fais pas, même sur un conteneur jetable que je viens de créer. Tout
-ce qui est écrit ci-dessus vient de la lecture XML-RPC des enregistrements réellement créés
-(`name`, `state`, `amount_total`, `cost_lines`, `valuation_adjustment_lines`, `former_cost`,
-`additional_landed_cost`, `final_cost`). → Si tu veux la capture d'écran, l'instance se recrée en
-quatre commandes (section 5) et `admin` / `admin` t'y connecte en dix secondes.
+**L'écran Odoo n'a pas été regardé.** Tout ce qui est écrit ci-dessus vient de la lecture XML-RPC
+des enregistrements réellement créés (`name`, `state`, `amount_total`, `cost_lines`,
+`valuation_adjustment_lines`, `former_cost`, `additional_landed_cost`, `final_cost`). Pour le voir,
+l'instance se recrée en quatre commandes (section 5), identifiants `admin` / `admin`.
 
 **Pas de validation, jamais.** `button_validate` poste des écritures comptables ; c'est la décision
 de celui dont ce sont les livres, dans son écran à lui.
@@ -380,7 +390,7 @@ id) et le journal aussi (premier journal `general`). Si le client en a plusieurs
 ce qui est un choix par défaut discutable. → À rendre configurable sur la connexion ERP le jour où un
 partenaire s'en plaint.
 
-## 17. Durcissement des chemins d'erreur (12 septembre 2026)
+## 16. Durcissement des chemins d'erreur (12 septembre 2026)
 
 ### Le vrai danger n'était pas un mauvais chiffre, c'était un worker qui ne revient jamais
 
