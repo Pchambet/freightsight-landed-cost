@@ -19,8 +19,8 @@ purchase-order line, in Decimal, to the cent, with the method written on each co
 
 - **The question.** An importer pays one forwarder invoice for a container that carries several
   products. What did *each* product actually cost, landed? The allocation key alone (value, volume,
-  weight…) moves a product's unit cost by double digits, and a spreadsheet split pro rata of value never
-  makes that choice explicit.
+  weight…) can move a product's unit cost by double-digit percentages (+13 % / −14 % in the example
+  below), and a spreadsheet split pro rata of value never makes that choice explicit.
 - **Worked example below, run on the real engine:** on the same 26,558.79 € container, charging freight
   by volume instead of by value moves a tyre's landed cost from 17.98 € to 20.34 € (+2.36 €, +13 %) and
   a floor mat's from 26.16 € to 22.61 € (−3.55 €, −14 %). Totals are identical; the margin per product
@@ -61,10 +61,10 @@ The tyres fill 37.5 of the 42.5 m³ loaded but only 51 % of the value. If space 
 charge, a value split has the mats subsidise the tyres' freight; a volume split puts it on the tyres, and
 because ocean freight enters the customs value, they also carry more of the duty. Which policy is right
 is a business decision (what drives the charge?), which is why FreightSight writes the method on each
-cost and shows a "what if" preview before anything is saved. The middle column is exactly what the application displays for this
-container: `backend/tests/test_demo_story.py` pins 17.9750 € and 26.1550 € through the API and a real
-database, and `backend/tests/test_worked_example.py` fails if this table drifts from
-`backend/scripts/worked_example.py`.
+cost and shows a "what if" preview before anything is saved. The "FreightSight default" column is
+exactly what the application displays for this container: `backend/tests/test_demo_story.py` pins
+17.9750 € and 26.1550 € through the API and a real database, and `backend/tests/test_worked_example.py`
+fails if this table drifts from `backend/scripts/worked_example.py`.
 
 ```bash
 cd backend && uv run python scripts/worked_example.py          # prints the table above
@@ -73,7 +73,7 @@ uv run --with matplotlib python scripts/worked_example.py --figure ../docs/figur
 
 ## Why it matters
 
-Small importers price on FOB and learn their real cost per purchase order 30 to 60 days later, once the
+Small importers often price on FOB and learn their real cost per purchase order weeks later, once the
 forwarder, customs and demurrage invoices have arrived. Meanwhile they set selling prices and reorder on a
 unit cost that is wrong in a direction nobody checks. FreightSight gives that unit cost early (from rate
 cards, as an estimate), replaces each estimate by the invoiced amount when it lands, and reports the
@@ -133,7 +133,8 @@ strict) and its reference cases in [`backend/tests/test_engine.py`](backend/test
   subscription polling, daily risk recomputation, in-app and e-mail alerts.
 - **Odoo 17 connector**: reads confirmed purchase orders incrementally and writes a container's landed
   cost back as a *draft* in `stock_landed_costs`, with a preview of the exact document first; it never
-  validates an entry in the customer's books. Field notes (in French): [`docs/odoo-questions.md`](docs/odoo-questions.md).
+  validates an entry in the customer's books. Engineering log against a real Odoo 17 instance (in
+French): [`docs/odoo-questions.md`](docs/odoo-questions.md).
 - **Reports and exports**: landed cost by supplier, route, month or cost type; demurrage paid vs avoided;
   unit cost history per SKU; CSV exports in French or English.
 - **Audit log**: append-only, with before/after values.
@@ -199,7 +200,9 @@ npm run dev                     # http://localhost:3000
 ```
 
 For the local API to accept those sessions, put `CLERK_ISSUER` and `CLERK_JWKS_URL` in a repo-root `.env`
-(see `.env.example`); docker compose passes them to the API.
+(see `.env.example`); docker compose passes them to the API. The API alone needs no Clerk account: docker
+compose enables a development principal, so a request carrying an `X-Org-Id: <any uuid>` header acts as
+the owner of that organization (the front end still requires Clerk).
 
 Try it: on an empty organization, Containers → load the sample data, then upload
 `docs/demo/fixtures/facture-transdemo-demo.pdf` in the invoice inbox and confirm its five lines: container
@@ -241,7 +244,7 @@ backend/
 ├── scripts/               worked example, OpenAPI export, Odoo seed
 └── tests/                 pytest suite + invoice-reading bench
 frontend/                  Next.js app (see frontend/README.md)
-docs/                      invoice bench write-up, Odoo field notes, demo invoice fixture, figures
+docs/                      invoice bench write-up, Odoo engineering log, demo invoice fixture, figures
 ```
 
 ## Limitations
