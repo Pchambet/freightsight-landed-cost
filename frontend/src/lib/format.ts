@@ -48,7 +48,8 @@ export function rate(value: string | number | null | undefined, locale: string =
   if (value === null || value === undefined) return "—";
   const n = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(n)) return "—";
-  return new Intl.NumberFormat(intl(locale), { minimumFractionDigits: 2, maximumFractionDigits: 6 }).format(n);
+  // Eight, as recorded: a rate for a currency like the dong (0,00003650) has nothing left at six.
+  return new Intl.NumberFormat(intl(locale), { minimumFractionDigits: 2, maximumFractionDigits: 8 }).format(n);
 }
 
 /** Three-tier reading of an extraction confidence score (0–1): what a DAF acts on, not the number itself.
@@ -69,10 +70,11 @@ export function qty(value: string | number, locale: string = DEFAULT_LOCALE): st
   return new Intl.NumberFormat(intl(locale), { maximumFractionDigits: 4 }).format(n);
 }
 
-export function pct(value: string | number, locale: string = DEFAULT_LOCALE): string {
+/** `digits`: the precision the figure has — a margin the API rounds to 0.1 is not shown as "20,60 %". */
+export function pct(value: string | number, locale: string = DEFAULT_LOCALE, digits = 2): string {
   const n = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(n)) return "—";
-  return `${new Intl.NumberFormat(intl(locale), { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)} %`;
+  return `${new Intl.NumberFormat(intl(locale), { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(n)} %`;
 }
 
 /** Numeric in French (08/09/2026), abbreviated month in English (08 Sep 2026). */
@@ -93,8 +95,7 @@ export function dateShort(value: string | null | undefined, locale: string = DEF
  * server process's own TZ (which nothing here controls; see docker-compose, out of scope here).
  * The screens read that date against, and the app is sold to, France: comparing against a UTC
  * midnight read a day behind between 00:00 and 02:00 Paris time in summer, since UTC midnight is
- * still "yesterday evening" there (needs_other_lane flagged this drift against the backend, which
- * now counts in the port's own calendar). Reading Europe/Paris explicitly fixes that regardless of
+ * still "yesterday evening" there, while the backend counts in the port's own calendar. Reading Europe/Paris explicitly fixes that regardless of
  * how the server itself is configured.
  */
 export function daysUntil(isoDate: string | null | undefined): number | null {
@@ -108,10 +109,52 @@ export function daysUntil(isoDate: string | null | undefined): number | null {
   return Math.round((target - todayParis) / 86_400_000);
 }
 
-/** "09/09/2026 14:30" in French, "Sep 9, 2026, 2:30 PM" in English; always the browser-neutral UTC day/time of the ISO value. */
+/**
+ * "09/09/2026 14:30" in French, "09/09/2026, 14:30" in English, read on the clock of Paris: these
+ * pages render on a server whose own zone is UTC, and an action taken at 10:37 in Lyon must not be
+ * logged as 08:37 (the share dialog, rendered in the browser, already said 10:37). Same zone as
+ * `daysUntil`.
+ */
 export function dateTimeShort(value: string | null | undefined, locale: string = DEFAULT_LOCALE): string {
   if (!value) return "—";
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return "—";
-  return new Intl.DateTimeFormat(locale === "fr" ? "fr-FR" : "en-GB", { dateStyle: "short", timeStyle: "short", timeZone: "UTC" }).format(d);
+  return new Intl.DateTimeFormat(locale === "fr" ? "fr-FR" : "en-GB", { dateStyle: "short", timeStyle: "short", timeZone: "Europe/Paris" }).format(d);
+}
+
+/** The clock of Paris read for one instant, as zero-padded parts. */
+function parisParts(instant: Date) {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Paris", hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }).formatToParts(instant);
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === type)?.value ?? "00";
+  return { year: part("year"), month: part("month"), day: part("day"), hour: part("hour"), minute: part("minute"), second: part("second") };
+}
+
+/** Today on the clock of Paris (`YYYY-MM-DD`), the day `daysUntil` counts from: a date field's default. */
+export function parisToday(now: Date = new Date()): string {
+  const p = parisParts(now);
+  return `${p.year}-${p.month}-${p.day}`;
+}
+
+/** Now on the clock of Paris, as a `datetime-local` value (`YYYY-MM-DDTHH:mm`). */
+export function parisNowLocal(now: Date = new Date()): string {
+  const p = parisParts(now);
+  return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}`;
+}
+
+/**
+ * A `datetime-local` value typed on the clock of Paris, as the UTC instant the API stores: the inverse
+ * of `dateTimeShort`, so an event typed at 23:30 reads 23:30 afterwards, not 01:30 the next day. The
+ * offset is Paris's own for that date (+1 in winter, +2 in summer), read again at the instant found so
+ * a time typed across the change of hour lands on the right side of it.
+ */
+export function parisLocalToIso(local: string): string {
+  const [date, time = "00:00"] = local.split("T");
+  const [y, m, d] = date.split("-").map(Number);
+  const [h, min] = time.split(":").map(Number);
+  const wall = Date.UTC(y, m - 1, d, h, min);
+  const offset = (instant: number) => {
+    const p = parisParts(new Date(instant));
+    return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second) - instant;
+  };
+  return new Date(wall - offset(wall - offset(wall))).toISOString();
 }

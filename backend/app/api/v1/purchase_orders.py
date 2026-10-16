@@ -12,6 +12,7 @@ from app.api.v1.deps import FxDep, WriterDep
 from app.core.errors import Conflict, Unprocessable
 from app.core.money import q2
 from app.core.tenancy import TenantDep, TenantSession
+from app.domain.audit.service import record
 from app.domain.costing.service import recompute_org
 from app.domain.models import Container, ContainerLoad, PurchaseOrder, PurchaseOrderLine, Supplier
 from app.domain.products import service as products
@@ -38,10 +39,16 @@ def _load_po(t: TenantSession, po_id: UUID) -> PurchaseOrder:
     return po
 
 
-def _resolve_po_fx(t: TenantSession, fx: FxDep, po: PurchaseOrder, manual: Decimal | None) -> None:
+#: An order's header was edited. Its exchange rate above all: it moves every landed cost the order
+#: carries, closed months' drift included, so the log keeps the rate before and after and its source.
+PURCHASE_ORDER_UPDATED = "purchase_order.updated"
+
+
+def _resolve_po_fx(t: TenantSession, fx: FxDep, po: PurchaseOrder, manual: Decimal | None) -> str:
+    """Set the order's rate, and say where it came from (ecb, ecb_latest, manual, same)."""
     if po.currency == t.org.base_currency:
         po.fx_rate, po.fx_date = Decimal("1"), po.fx_date
-        return
+        return "same"
     on_date = po.fx_date or po.order_date
     if on_date is None:
         if manual is None:
@@ -50,9 +57,20 @@ def _resolve_po_fx(t: TenantSession, fx: FxDep, po: PurchaseOrder, manual: Decim
                 code="FX_DATE_REQUIRED",
             )
         po.fx_rate = manual
-        return
+        return "manual"
     resolved = fx.resolve(t.db, t.org.base_currency, po.currency, on_date, manual)
     po.fx_rate, po.fx_date = resolved.rate, on_date
+    return resolved.source
+
+
+def _header(po: PurchaseOrder) -> dict[str, object]:
+    return {
+        "supplier": po.supplier.name if po.supplier else None,
+        "incoterm": po.incoterm,
+        "order_date": po.order_date,
+        "fx_rate": po.fx_rate,
+        "fx_date": po.fx_date,
+    }
 
 
 @router.get("", response_model=list[schemas.PurchaseOrderSummary])
@@ -88,7 +106,9 @@ def list_purchase_orders(
                 supplier_name=po.supplier.name if po.supplier else None,
                 currency=po.currency,
                 line_count=len(po.lines),
-                fob_base=q2(sum((ln.quantity * ln.unit_price * po.fx_rate for ln in po.lines), Decimal(0))),
+                fob_base=None
+                if po.fx_rate is None
+                else q2(sum((ln.quantity * ln.unit_price * po.fx_rate for ln in po.lines), Decimal(0))),
                 container_numbers=sorted(numbers),
             )
         )
@@ -146,16 +166,33 @@ def get_purchase_order(po_id: UUID, t: TenantDep) -> schemas.PurchaseOrderRespon
 
 @router.patch("/{po_id}", response_model=schemas.PurchaseOrderResponse)
 def update_purchase_order(
-    po_id: UUID, payload: schemas.PurchaseOrderUpdate, t: TenantDep, fx: FxDep, _: WriterDep
+    po_id: UUID, payload: schemas.PurchaseOrderUpdate, t: TenantDep, fx: FxDep, p: WriterDep
 ) -> schemas.PurchaseOrderResponse:
     po = _load_po(t, po_id)
+    before = _header(po)
+    rate_day = po.fx_date or po.order_date
+    had_rate = po.fx_rate is not None
     changes = payload.model_dump(exclude_unset=True, exclude={"lines", "fx_rate"})
-    if changes.get("supplier_id"):
-        t.get_or_404(Supplier, changes["supplier_id"], "Supplier")
+    supplier = (
+        t.get_or_404(Supplier, changes["supplier_id"], "Supplier") if changes.get("supplier_id") else None
+    )
     for k, v in changes.items():
         setattr(po, k, v)
-    if payload.fx_rate is not None or "fx_date" in changes or "order_date" in changes:
-        _resolve_po_fx(t, fx, po, payload.fx_rate)
+    if "supplier_id" in changes:
+        po.supplier = supplier
+    # The rate is looked up again when one is given, when the day it is the rate of has moved, or
+    # when an order without one has a new date. An edit of the order date alone used to replace a
+    # rate typed by hand with the ECB's of the same day, without a word.
+    dated = "fx_date" in changes or "order_date" in changes
+    source = None
+    if payload.fx_rate is not None or (po.fx_date or po.order_date) != rate_day or (dated and not had_rate):
+        try:
+            source = _resolve_po_fx(t, fx, po, payload.fx_rate)
+        except Unprocessable:
+            if payload.fx_rate is not None or had_rate:
+                raise
+            # An order still without a rate keeps none when its new date has none either: a date
+            # can be corrected on an order in a currency the ECB does not quote.
     if payload.lines is not None:
         existing = {ln.line_no: ln for ln in po.lines}
         for ln_in in payload.lines:
@@ -183,6 +220,19 @@ def update_purchase_order(
                 if ln_in.sku:
                     known = products.by_sku(t.db, t.org_id, {ln_in.sku})
                     products.fill_blanks(added, known.get(ln_in.sku))
+    after = _header(po)
+    moved = [key for key in after if after[key] != before[key]]
+    if moved:
+        record(
+            t.db,
+            t.org_id,
+            actor_user_id=p.user_id,
+            action=PURCHASE_ORDER_UPDATED,
+            entity_type="purchase_order",
+            entity_id=po.id,
+            before={key: before[key] for key in moved},
+            after={key: after[key] for key in moved} | ({"fx_source": source} if "fx_rate" in moved else {}),
+        )
     t.db.flush()
     recompute_org(t.db, t.org)
     t.db.commit()

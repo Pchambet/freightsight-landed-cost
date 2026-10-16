@@ -12,6 +12,13 @@ const NAV = [
   { href: "/securite", label: "Sécurité" },
 ];
 
+// A legal page is linked only once it is published (lib/site.ts): a link to a 404 would be worse than none.
+const LEGAL = [
+  ...(site.legalNoticePublished ? [{ href: "/mentions-legales", label: "Mentions légales" }] : []),
+  { href: "/confidentialite", label: "Confidentialité" },
+  ...(site.termsPublished ? [{ href: "/cgv", label: "CGV" }] : []),
+];
+
 export default function MarketingLayout({ children }: { children: React.ReactNode }) {
   return (
     <div lang="fr" className="min-h-screen bg-white text-slate-900">
@@ -42,13 +49,16 @@ export default function MarketingLayout({ children }: { children: React.ReactNod
           </div>
           <div>
             <div className="font-semibold text-slate-900 mb-2">Données</div>
-            <p>Hébergé à {site.hostingRegion}. Une base isolée par société, aucun modèle entraîné sur vos données. <Link href="/securite" className="text-blue-700 underline underline-offset-2 hover:no-underline">Page sécurité</Link>.</p>
+            <p>Hébergé à {site.hostingRegion}. Données isolées par société jusque dans la base, aucun modèle entraîné sur vos données. <Link href="/securite" className="text-blue-700 underline underline-offset-2 hover:no-underline">Page sécurité</Link>.</p>
           </div>
           <div>
             <div className="font-semibold text-slate-900 mb-2">Contact</div>
             <p><a href={site.bookingUrl} className="text-blue-700 hover:underline">Réserver 20 minutes</a> · <Link href="/design-partner" className="text-blue-700 hover:underline">Programme design partner</Link></p>
             <p className="mt-2"><a href={site.quickCheckUrl} className="text-blue-700 hover:underline">Envoyez une facture transitaire et le bon de commande</a> : coût rendu par référence sous 24&nbsp;h.</p>
             <p className="mt-3 text-xs text-slate-500">© 2026 FreightSight. Les montants affichés sur ce site sont des exemples.</p>
+            <nav aria-label="Informations légales" className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+              {LEGAL.map((l) => <Link key={l.href} href={l.href} className="text-slate-500 underline underline-offset-2 hover:text-slate-900">{l.label}</Link>)}
+            </nav>
           </div>
         </div>
       </footer>

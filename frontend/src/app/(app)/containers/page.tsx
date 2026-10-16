@@ -12,6 +12,7 @@ import OnboardingChecklist from "@/features/onboarding/OnboardingChecklist";
 import { periodTitle } from "@/features/periods/format";
 import WorkflowNextStep from "@/features/workflow/WorkflowNextStep";
 import { containersHubStep } from "@/features/workflow/steps";
+import { FobMissingLine } from "@/features/report/FobMissing";
 import { api, type ContainerSummary } from "@/lib/api/client";
 import { demurrageRelevant } from "@/lib/domain";
 import { dateShort, daysUntil } from "@/lib/format";
@@ -80,16 +81,18 @@ const fold = (v: string) => v.normalize("NFD").replace(/\p{Diacritic}/gu, "").to
 
 export default async function ContainersPage({ searchParams }: { searchParams: Promise<Search> }) {
   const sp = await searchParams;
-  const [{ containers, currency, invoicesToReview, confirmedInvoiceCount, purchaseOrderCount, error }, tp, t, tc, costType, tg, locale] = await Promise.all([
+  const [{ containers, currency, invoicesToReview, confirmedInvoiceCount, purchaseOrderCount, error }, tp, t, tc, costType, tg, tm, locale] = await Promise.all([
     load(),
     getTranslations("periods.container"),
     getTranslations("containers"),
     getTranslations("common"),
     getTranslations("domain.costType"),
     getTranslations("glossary"),
+    getTranslations("fobMissing"),
     getLocale(),
   ]);
   const active = containers.filter((c) => !CLOSED.includes(c.milestone));
+  const unvalued = active.reduce((n, c) => n + (c.fob_missing_lines ?? 0), 0);
   const atRisk = active.filter((c) => RISKY.includes(c.dnd_risk));
   const noCost = active.filter((c) => c.load_count > 0 && !c.cost_types_present?.length);
   const nextLfd = atRisk.map((c) => c.last_free_day).filter((d): d is string => !!d).sort()[0] ?? null;
@@ -116,7 +119,8 @@ export default async function ContainersPage({ searchParams }: { searchParams: P
     container: (a, b) => dir * a.container_number.localeCompare(b.container_number),
     // No last free day sorts last in both directions: "unknown" is never the most urgent.
     lfd: (a, b) => (a.last_free_day ? 0 : 1) - (b.last_free_day ? 0 : 1) || dir * (a.last_free_day ?? "").localeCompare(b.last_free_day ?? ""),
-    fob: (a, b) => dir * (Number(a.fob_base) - Number(b.fob_base)),
+    // A box whose goods have no known value sorts last in both directions, like a missing date.
+    fob: (a, b) => (a.fob_base === null ? 1 : 0) - (b.fob_base === null ? 1 : 0) || dir * (Number(a.fob_base) - Number(b.fob_base)),
     allocated: (a, b) => dir * (Number(a.allocated_base) - Number(b.allocated_base)),
   };
   const rows = inView[view]
@@ -169,8 +173,9 @@ export default async function ContainersPage({ searchParams }: { searchParams: P
       {containers.length > 0 ? (
         <>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 mb-6">
-            <Kpi label={t("kpi.fobActive")} tooltip={tg("fob")} hint={t("kpi.activeCount", { count: active.length })}>
-              <Money amount={sumCents(active.map((c) => c.fob_base))} currency={currency} />
+            {/* The total is unknown as soon as one box's is: never the sum of the others. */}
+            <Kpi label={t("kpi.fobActive")} tooltip={tg("fob")} hint={unvalued > 0 ? tm("line") : t("kpi.activeCount", { count: active.length })}>
+              <Money amount={unvalued > 0 ? null : sumCents(active.map((c) => c.fob_base ?? "0"))} currency={currency} />
             </Kpi>
             <Kpi label={t("kpi.allocated")} tooltip={tg("allocated")} hint={t("kpi.ofActive", { count: active.length })}>
               <Money amount={sumCents(active.map((c) => c.allocated_base))} currency={currency} className="text-blue-700" />
@@ -289,7 +294,7 @@ export default async function ContainersPage({ searchParams }: { searchParams: P
                     <td className={`${td} text-slate-600`}>{dateShort(c.last_free_day, locale)}</td>
                     <td className={td}><RiskBadge risk={c.dnd_risk} days={demurrageRelevant(c) ? daysUntil(c.last_free_day) : null} /></td>
                     <td className={`${td} text-slate-600`}>{c.po_numbers?.length ? c.po_numbers.join(", ") : <span className="text-slate-500">{t("none")}</span>}</td>
-                    <td className={tdRight}><Money amount={c.fob_base} currency={currency} /></td>
+                    <td className={tdRight}><Money amount={c.fob_base} currency={currency} />{c.fob_missing ? <FobMissingLine href={`/container/${c.id}`} /> : null}</td>
                     <td className={tdRight}><Money amount={c.allocated_base} currency={currency} className="text-blue-700" /></td>
                     <td className={`${td} text-xs text-slate-500`}>
                       {c.cost_types_present?.length ? c.cost_types_present.map((k) => costType(k)).join(", ") : <span className="text-slate-500">{t("none")}</span>}

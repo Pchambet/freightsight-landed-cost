@@ -54,7 +54,7 @@ export default function ErpConnection({ connection, runs }: { connection: Conn |
             <span className="text-xs text-slate-500">· {connection.url} · {connection.database} · {connection.login}</span>
           </div>
           {/* connection.last_error is a raw, uncoded backend string (now readable prose, but still
-              English on record) — shown as a generic sentence rather than verbatim; see needs_other_lane. */}
+              English on record) — shown as a generic sentence until the API gives the failure a code. */}
           <div className="text-xs text-slate-500">{connection.last_sync_at ? t("lastSync", { date: dateTimeShort(connection.last_sync_at, locale) }) : t("neverSynced")}{connection.last_error ? <span className="text-red-600"> · {t("lastErrorGeneric")}</span> : null}</div>
           {connection.consecutive_failures > 0 ? (
             <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">

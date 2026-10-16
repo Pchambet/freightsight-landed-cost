@@ -115,13 +115,14 @@ def unit_landed_costs(policy: Policy) -> dict[str, Decimal]:
     out = {}
     for (sku, *_), ld in zip(LINES, loads(), strict=True):
         allocated = sum((a.amount_base for a in result.allocations if a.load_id == ld.id), Decimal(0))
+        assert ld.fob is not None  # every line of the example is priced
         out[sku] = ((ld.fob + allocated) / ld.quantity).quantize(Decimal("0.0001"))
     return out
 
 
 def container_total(policy: Policy) -> Decimal:
     result = allocate(costs(policy), loads())
-    return sum((ld.fob for ld in loads()), Decimal(0)) + sum(
+    return sum((ld.fob or Decimal(0) for ld in loads()), Decimal(0)) + sum(
         (a.amount_base for a in result.allocations), Decimal(0)
     )
 

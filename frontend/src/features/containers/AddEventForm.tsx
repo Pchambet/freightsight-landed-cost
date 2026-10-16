@@ -7,13 +7,15 @@ import { toast } from "sonner";
 import { btnSecondary, input, label } from "@/components/layout/AppShell";
 import { addTrackingEvent } from "@/features/actions";
 import { MILESTONE_CODES, type MilestoneCode } from "@/lib/domain";
+import { parisLocalToIso, parisNowLocal } from "@/lib/format";
 
 /** Manual event entry: the form is the ManualProvider's user interface. */
 export default function AddEventForm({ containerId }: { containerId: string }) {
   const t = useTranslations("timeline");
   const codeLabel = useTranslations("domain.milestone");
   const [code, setCode] = useState<MilestoneCode>("DISCHARGED");
-  const [when, setWhen] = useState(() => new Date().toISOString().slice(0, 16));
+  // Typed and shown on the clock of Paris, like every time the app displays (lib/format).
+  const [when, setWhen] = useState(() => parisNowLocal());
   const [estimate, setEstimate] = useState(false);
   const [unlocode, setUnlocode] = useState("");
   const [locationName, setLocationName] = useState("");
@@ -28,7 +30,7 @@ export default function AddEventForm({ containerId }: { containerId: string }) {
     startTransition(async () => {
       const result = await addTrackingEvent(containerId, {
         code,
-        occurred_at: `${when}:00Z`,
+        occurred_at: parisLocalToIso(when),
         is_estimate: estimate,
         location_unlocode: unlocode.trim() ? unlocode.trim().toUpperCase() : null,
         location_name: locationName.trim() || null,

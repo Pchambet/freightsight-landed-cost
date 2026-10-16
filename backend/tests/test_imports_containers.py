@@ -6,6 +6,7 @@ the quarter it could not see before."""
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -265,6 +266,25 @@ def test_what_the_file_leaves_open_is_said_before_anyone_counts_days_on_it(clien
     ]
     _, report = preview(client, sheet(*rows))
     assert sorted(codes(report["warnings"])) == ["CLOCK_LEFT_RUNNING", "NO_DISCHARGE_DATE"]
+
+
+def test_a_box_still_at_the_terminal_counts_its_free_days_from_the_import_on(client: TestClient) -> None:
+    """The sheet is often how a box first reaches the application: one discharged and not out yet shows
+    its last free day and raises its alert when the file is loaded, not after the next morning's pass."""
+    discharged = datetime.now(UTC).date() - timedelta(days=3)
+    job, _ = preview(
+        client,
+        sheet(f"MSCU4821994;40HC;;;;;;;;{discharged - timedelta(days=1):%d/%m/%Y};{discharged:%d/%m/%Y};;"),
+    )
+    assert client.get("/api/v1/alerts").json() == []  # a preview writes nothing
+    commit(client, job)
+    box = boxes(client)["MSCU4821994"]
+    # Five free days by default, the day of discharge counted.
+    assert (box["last_free_day"], box["dnd_risk"] != "NONE") == (
+        (discharged + timedelta(days=4)).isoformat(),
+        True,
+    )
+    assert [a["container_number"] for a in client.get("/api/v1/alerts").json()] == ["MSCU4821994"]
 
 
 def test_sizes_ports_and_lines_are_read_into_codes_and_the_unreadable_ones_are_said(

@@ -15,18 +15,6 @@ async function fail<T>(error: unknown, fallbackKey: string): Promise<ActionResul
   return { ok: false, error: await problemMessage(error, t(fallbackKey)) };
 }
 
-/**
- * A POST call typed loosely enough to reach a route or a request field the generated client does
- * not carry yet (needs_other_lane: the lead regenerates `schema.d.ts` from the OpenAPI document).
- * `api.POST` itself stays fully typed for every route that already exists in it; this is only for
- * the few calls below that a route or field ahead of the regeneration needs, cast once here rather
- * than scattering `as never` through each call site. The double assertion is deliberate — the real
- * type and this one do not structurally overlap — and the result is cast back to the known real
- * response shape right after the call, so callers see ordinary, correct types.
- */
-type RawPost = (path: string, options: { params: { path: Record<string, string> }; body?: unknown }) => Promise<{ data?: unknown; error?: unknown }>;
-const rawPost = api.POST as unknown as RawPost;
-
 function normalizeAmount(raw: string): string | null {
   const s = raw.trim().replace(/[\s  ]/g, "");
   if (!s) return null;
@@ -247,21 +235,27 @@ export async function updateInvoiceLine(
 
 /**
  * One forwarder invoice is nearly always about one container or one shipment, and most of its lines
- * are read right: attaching and accepting them one by one is the slowest part of a review. The patches run side by side on the server and the
- * page is revalidated once; a line that fails does not undo the others, the count says how many held.
+ * are read right: attaching and accepting them one by one is the slowest part of a review. Every line
+ * goes in one call, applied by the API under one lock, all or nothing: one call per line made the
+ * lines refuse each other (INVOICE_BUSY) and "keep the 5 lines" kept one while saying it had worked.
  */
 export async function patchInvoiceLines(invoiceId: string, lineIds: string[], patch: { scope: CostScope; target_id: string } | { accepted: boolean }): Promise<ActionResult<{ updated: number }>> {
   await protectAction();
-  const results = await Promise.all(
-    lineIds.slice(0, 200).map((lineId) =>
-      api.PATCH("/api/v1/invoices/{invoice_id}/lines/{line_id}", { params: { path: { invoice_id: invoiceId, line_id: lineId } }, body: patch }),
-    ),
-  );
+  const { data, error } = await api.PATCH("/api/v1/invoices/{invoice_id}/lines", {
+    params: { path: { invoice_id: invoiceId } },
+    body: { lines: lineIds.map((id) => ({ id, ...patch })) },
+  });
+  if (error || !data) {
+    const problem = error as Problem | undefined;
+    // The per-line refusals name line ids, which mean nothing on screen: say how many, and that none changed.
+    if (problem?.code === "INVOICE_LINES_REFUSED") {
+      const t = await getTranslations("errors");
+      return { ok: false, error: t("INVOICE_LINES_REFUSED", { count: problem.errors?.length ?? 0 }) };
+    }
+    return await fail(error, "invoices.line.failed");
+  }
   revalidatePath(`/invoices/${invoiceId}`);
-  const failed = results.find((r) => r.error);
-  const updated = results.filter((r) => !r.error).length;
-  if (failed && updated === 0) return await fail(failed.error, "invoices.line.failed");
-  return { ok: true, data: { updated } };
+  return { ok: true, data: { updated: lineIds.length } };
 }
 
 export type ConfirmInvoiceResult =
@@ -285,14 +279,11 @@ export type ConfirmInvoiceResult =
  */
 export async function confirmInvoice(invoiceId: string, force = false, forceRecorded = false): Promise<ConfirmInvoiceResult> {
   await protectAction();
-  // The route only gained this optional body for the force-confirm case; the generated schema does
-  // not carry it yet (needs_other_lane), hence `rawPost` — the response is the same
-  // `InvoiceConfirmResponse` either way, cast back below.
-  const raw = await rawPost("/api/v1/invoices/{invoice_id}/confirm", {
+  // The body is only for a confirmation that overrules a check; a plain one sends none.
+  const { data, error } = await api.POST("/api/v1/invoices/{invoice_id}/confirm", {
     params: { path: { invoice_id: invoiceId } },
-    ...(force || forceRecorded ? { body: { ...(force ? { force: true } : {}), ...(forceRecorded ? { force_recorded: true } : {}) } } : {}),
+    ...(force || forceRecorded ? { body: { force, force_recorded: forceRecorded } } : {}),
   });
-  const { data, error } = raw as { data?: Schemas["InvoiceConfirmResponse"]; error?: Problem | null };
   if (error || !data) {
     const t = await getTranslations();
     const code = error && typeof error === "object" ? (error as { code?: string | null }).code ?? undefined : undefined;
@@ -318,9 +309,7 @@ export async function confirmInvoice(invoiceId: string, force = false, forceReco
 
 /**
  * `POST /invoices/{id}/lines` — a line the reviewer types in by hand, for a charge the extraction
- * missed entirely (see the "il manque X €" hint on the review screen). Not yet in the generated
- * schema (needs_other_lane), so the path and body are passed as the OpenAPI document will type them
- * once regenerated; `params.path` still drives the real URL at runtime.
+ * missed entirely (see the "il manque X €" hint on the review screen).
  */
 export async function addInvoiceLine(
   invoiceId: string,
@@ -332,10 +321,11 @@ export async function addInvoiceLine(
     const t = await getTranslations("costs.form");
     return { ok: false, error: t("amountInvalid") };
   }
-  const raw = await rawPost("/api/v1/invoices/{invoice_id}/lines", {
+  const { error } = await api.POST("/api/v1/invoices/{invoice_id}/lines", {
     params: { path: { invoice_id: invoiceId } },
     body: {
-      description: input.description || null,
+      // The API takes an empty description, not null: null was refused as an invalid string.
+      description: input.description ?? "",
       amount,
       currency: input.currency || undefined,
       cost_type: input.cost_type || null,
@@ -343,7 +333,6 @@ export async function addInvoiceLine(
       target_id: input.target_id || null,
     },
   });
-  const { error } = raw as { error?: Problem | null };
   if (error) return await fail(error, "invoices.detail.addLineFailed");
   revalidatePath(`/invoices/${invoiceId}`);
   return { ok: true, data: null };

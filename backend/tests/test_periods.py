@@ -364,3 +364,20 @@ def test_the_cost_price_file_gives_the_average_or_the_last_arrival(
     assert unit(period=MARCH)[0] == "14,0000"  # a closed month gives its frozen cost price
     (row,) = read_csv(client.get("/api/v1/exports/sku-costs.csv", params={"period": MARCH}))
     assert (row["État de la période"], row["Référence"], row["Quantité"]) == ("Clôturée", "A", "50,0000")
+
+
+def test_two_closes_of_the_same_month_at_once_answer_409_not_500(
+    client: TestClient, two_months: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A double click: both requests pass the "already closed?" check before either has written. The
+    second one meets the unique constraint, which used to surface as a 500."""
+    from app.domain.periods import service
+
+    assert client.post(f"/api/v1/periods/{MARCH}/close").status_code == 201
+    monkeypatch.setattr(service, "_closes", lambda db, org: {})  # the check the racing request passed
+
+    res = client.post(f"/api/v1/periods/{MARCH}/close")
+    assert res.status_code == 409, res.text
+    assert res.json()["code"] == "PERIOD_ALREADY_CLOSED"
+    monkeypatch.undo()
+    assert periods(client)[MARCH]["status"] == "closed"

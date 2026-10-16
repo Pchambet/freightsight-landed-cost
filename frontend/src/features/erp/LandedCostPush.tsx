@@ -10,13 +10,7 @@ import { Money } from "@/components/shared/Money";
 import { forgetErpPush, listErpPushes, previewErpLandedCost, pushErpLandedCost, type ErpLandedCostPreview, type ErpPushResponse } from "@/features/actions";
 import { dateTimeShort } from "@/lib/format";
 
-const KNOWN_BLOCKERS = new Set(["no_erp_connection", "no_actual_costs", "no_receipt", "multiple_receipts", "not_valued", "unmatched_line", "already_pushed", "pushed_cost_changed", "pushed_cost_gone", "ambiguous_line", "erp_currency_mismatch"]);
-
-// `pushed_cost_changed`/`pushed_cost_gone` are advisory since the ERP lane's change: `pushable` can
-// be true while they are still listed (a stale draft to clean up in Odoo, not something blocking
-// this push). The schema has no `blocking` flag to read yet (needs_other_lane), so these two known
-// codes are told apart from an actual refusal by their code rather than by a field.
-const ADVISORY_BLOCKERS = new Set(["pushed_cost_changed", "pushed_cost_gone"]);
+const KNOWN_BLOCKERS = new Set(["no_erp_connection", "no_actual_costs", "no_receipt", "multiple_receipts", "not_valued", "unmatched_line", "already_pushed", "pushed_cost_changed", "pushed_cost_gone", "ambiguous_line", "erp_currency_mismatch", "adjustment_unplaced"]);
 
 type Loaded = { preview: ErpLandedCostPreview; pushes: ErpPushResponse[] };
 type State = { loading: boolean; data: Loaded | null; error: string | null };
@@ -140,7 +134,8 @@ export default function LandedCostPush({ containerId, currency, embedded = false
           ) : null}
 
           {blockers.filter((b) => b.code !== "already_pushed").map((b, i) =>
-            ADVISORY_BLOCKERS.has(b.code) ? (
+            // A remark about what has already gone (`blocking` false) is said apart from a refusal.
+            b.blocking === false ? (
               <div key={`${b.code}-${i}`} className="flex items-start text-sm text-blue-900 bg-blue-50 border border-blue-200 rounded-md px-3 py-2">
                 <Info className="w-4 h-4 mr-2 mt-0.5 shrink-0 text-blue-600" />
                 <span>{blockerText(b)}</span>

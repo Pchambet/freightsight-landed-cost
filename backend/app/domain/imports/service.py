@@ -25,6 +25,7 @@ from app.domain.imports.parsing import (
     header_signature,
     infer_comma_conventions,
     is_ambiguous_unit_column,
+    looks_like,
     parse_decimal,
     parse_table,
     suggest_mapping,
@@ -50,6 +51,8 @@ NUMERIC_FIELDS = (
     "unit_price",
     "unit_weight_kg",
     "unit_volume_cbm",
+    "line_weight_kg",
+    "line_volume_cbm",
     "duty_rate",
     "line_no",
     "container_quantity",
@@ -61,6 +64,11 @@ NUMERIC_FIELDS = (
 )
 #: Fields an export may state once, on the first row of an order, and leave blank underneath.
 FORWARD_FILLED_FIELDS = ("po_number", "supplier_name", "currency")
+#: A weight or a volume, said for one piece or for the whole order line: (per unit, line total, scale).
+DIMENSIONS = {
+    "weight": ("unit_weight_kg", "line_weight_kg", Decimal("0.0001")),
+    "volume": ("unit_volume_cbm", "line_volume_cbm", Decimal("0.000001")),
+}
 
 
 @dataclass
@@ -131,7 +139,9 @@ def create_job(t: TenantSession, kind: ImportKind, content: bytes, filename: str
     try:
         table = parse_table(content, filename)
     except ImportError_ as e:
-        raise Unprocessable(e.message, code=e.code) from e
+        refused = Unprocessable(e.message, code=e.code)
+        refused.extra.update(e.params)  # the cap a refusal names, for the sentence
+        raise refused from e
     signature = header_signature(table.columns)
     saved = t.db.scalar(
         t.q(ImportMapping).where(ImportMapping.kind == kind, ImportMapping.header_signature == signature)
@@ -172,6 +182,13 @@ def _check_mapping(kind: ImportKind, mapping: dict[str, str], columns: list[str]
             raise Unprocessable(
                 f"Map at least one of: {', '.join(group)}", code="MAPPING_INCOMPLETE", one_of=list(group)
             )
+    for dimension, (unit, line, _) in DIMENSIONS.items():
+        if mapping.get(unit) and mapping.get(line):
+            raise Unprocessable(
+                f"{dimension}: map the per-unit column or the line-total column, not both",
+                code="MAPPING_UNIT_AND_LINE_TOTAL",
+                dimension=dimension,
+            )
     unknown = [c for c in mapping.values() if c and c not in columns]
     if unknown:
         raise Unprocessable(
@@ -203,7 +220,7 @@ def run_job(
         kind=job.kind,
     )
     conventions = infer_comma_conventions(table, {mapping[f] for f in NUMERIC_FIELDS if mapping.get(f)})
-    _report_file_notes(table, mapping, conventions, report)
+    _report_file_notes(job.kind, table, mapping, conventions, report)
 
     nested = t.db.begin_nested()
     try:
@@ -271,6 +288,7 @@ def _remember_mapping(t: TenantSession, job: ImportJob, mapping: dict[str, str])
 
 
 def _report_file_notes(
+    kind: ImportKind,
     table: Table,
     mapping: dict[str, str],
     conventions: dict[str, ColumnNumbers],
@@ -319,6 +337,24 @@ def _report_file_notes(
                     "UNIT_COLUMN_AMBIGUOUS",
                     f"Column {column!r} does not say whether it holds one unit or the whole line; "
                     f"it is read as one unit",
+                    {"column": column},
+                )
+            )
+    mapped = set(mapping.values())
+    for column in table.columns:
+        unit = looks_like(kind, column)
+        if unit is None or column in mapped:
+            continue
+        line_total = next(line for u, line, _ in DIMENSIONS.values() if u == unit)
+        if not (mapping.get(unit) or mapping.get(line_total)):
+            # A weight the reader would not map on its own: without it the freight split by weight
+            # has no basis, and only a person can say whether it is one piece's or the line's.
+            report.warnings.append(
+                RowIssue(
+                    line,
+                    unit,
+                    "UNIT_COLUMN_UNMAPPED",
+                    f"Column {column!r} was not read: map it per unit or as the line's total",
                     {"column": column},
                 )
             )
@@ -543,8 +579,9 @@ def _set_order_rate(t: TenantSession, fx: FxService | None, po: PurchaseOrder, r
     It used to get 1 every time, with a warning: a 40 000 $ order counted as 40 000 €, a FOB about
     15 % too high until somebody noticed, and with it every share allocated by value. The rate of
     the order date (today without one) is what the purchase-order screen applies; the import now
-    does the same. Only when no rate can be had does the order fall back to 1, and the warning says
-    so with the three things a CFO needs: which rate, of which day, from where.
+    does the same, and says so with the three things a CFO needs: which rate, of which day, from
+    where. When no rate can be had the rate stays missing — never 1 — until a person sets it on the
+    order or a later import finds one; the engine then says the order's value is missing.
     """
     on_date = po.order_date or datetime.now(UTC).date()
     resolved = None
@@ -554,15 +591,15 @@ def _set_order_rate(t: TenantSession, fx: FxService | None, po: PurchaseOrder, r
         except Unprocessable:
             resolved = None
     if resolved is None:
+        po.fx_rate, po.fx_date = None, None
         r.warn(
             "currency",
-            "FX_RATE_DEFAULTED",
-            f"PO in {po.currency}: no rate known, fx_rate set to 1; adjust it on the PO",
+            "FX_RATE_MISSING",
+            f"PO in {po.currency}: no rate known for {on_date.isoformat()}; its value is missing "
+            f"until a rate is set on the PO",
             currency=po.currency,
             base_currency=t.org.base_currency,
-            rate="1",
             rate_date=on_date.isoformat(),
-            source="DEFAULT",
         )
         return
     po.fx_rate, po.fx_date = resolved.rate, resolved.rate_date
@@ -576,6 +613,18 @@ def _set_order_rate(t: TenantSession, fx: FxService | None, po: PurchaseOrder, r
         rate_date=resolved.rate_date.isoformat(),
         source=resolved.source,
     )
+
+
+def _per_unit(r: _Row, dimension: str, quantity: Decimal | None) -> Decimal | None:
+    """One piece's weight or volume, as the file says it or divided from the line's total. The order
+    line's quantity divides it — the line's, not a container's share of it — at the column's scale."""
+    unit, line_total, scale = DIMENSIONS[dimension]
+    if r.mapping.get(unit):
+        return r.decimal(unit)
+    total = r.decimal(line_total)
+    if total is None or quantity is None or quantity <= 0:
+        return None
+    return (total / quantity).quantize(scale)
 
 
 def _apply_purchase_orders(
@@ -593,8 +642,10 @@ def _apply_purchase_orders(
     # a genuinely second line of the same article, which used to be absorbed into the first one.
     implicit_lines: dict[tuple[str, str, int], int] = {}
     line_values: dict[tuple[str, str, int], tuple[Decimal, Decimal]] = {}
+    line_containers: dict[tuple[str, str, int], set[str | None]] = {}
     occurrences: dict[tuple[str, str], int] = {}
     next_line_no: dict[str, int] = {}
+    rate_tried: set[str] = set()
     rows = _forward_filled_rows(table, mapping, report)
     for idx, raw in enumerate(rows, start=table.header_row + 1):
         r = _Row(idx, raw, mapping, report, conventions)
@@ -622,8 +673,8 @@ def _apply_purchase_orders(
                 "currency", "INVALID_CURRENCY", f"{currency!r} is not a 3-letter ISO code", value=currency
             )
         line_no_raw = r.decimal("line_no")
-        weight = r.decimal("unit_weight_kg")
-        volume = r.decimal("unit_volume_cbm")
+        weight = _per_unit(r, "weight", quantity)
+        volume = _per_unit(r, "volume", quantity)
         duty = r.rate("duty_rate")
         order_date = r.date("order_date")
         container_number = r.container()
@@ -667,6 +718,19 @@ def _apply_purchase_orders(
                 # The same line said twice: the shape of a file that repeats the order line once
                 # per container. Only the container part of the row has anything left to say.
                 line_no, repeated_line = implicit_lines[previous], True
+                if container_number in line_containers[previous]:
+                    # ...unless there is no other container to say: then it is either a line
+                    # written twice or two lines that happen to match, and only a person knows.
+                    r.warn(
+                        "sku",
+                        "DUPLICATE_SKU_SAME_VALUES",
+                        f"{identity!r} appears again on {po_number} with the same quantity and price "
+                        f"and no other container; read as line {line_no} once",
+                        po_number=po_number,
+                        sku=identity,
+                        line_no=line_no,
+                    )
+                line_containers[previous].add(container_number)
             else:
                 existing_line = _find_line_without_number(t, po, sku, r.text("description"), seen)
                 if existing_line is not None:
@@ -697,6 +761,7 @@ def _apply_purchase_orders(
                     )
                 implicit_lines[(po_number, identity, seen)] = line_no
                 line_values[(po_number, identity, seen)] = (quantity, unit_price)
+                line_containers[(po_number, identity, seen)] = {container_number}
                 occurrences[key] = seen + 1
 
         supplier = _get_or_create_supplier(t, r.text("supplier_name"), report)
@@ -713,6 +778,7 @@ def _apply_purchase_orders(
             t.db.flush()
             report.purchase_orders_created += 1
             if currency != t.org.base_currency:
+                rate_tried.add(po_number)
                 _set_order_rate(t, fx, po, r)
         else:
             changed = False
@@ -722,6 +788,10 @@ def _apply_purchase_orders(
                 po.order_date, changed = order_date, True
             if changed:
                 report.purchase_orders_updated += 1
+            if po.fx_rate is None and po_number not in rate_tried:
+                # An order left without a rate gets one as soon as a later file finds it.
+                rate_tried.add(po_number)
+                _set_order_rate(t, fx, po, r)
 
         line = t.db.scalar(
             select(PurchaseOrderLine).where(

@@ -44,6 +44,7 @@ HEADERS_FR: dict[str, str] = {
     "import_vat": "TVA import (hors coût de revient)",
     "landed": "Coût de revient rendu",
     "unit_landed_cost": "Coût de revient unitaire",
+    "fob_missing": "Pourquoi le FOB manque",
     "unallocated": "Non ventilé",
     "unallocated_reason": "Raison du non-ventilé",
     "period_basis": "Date retenue pour la période",
@@ -213,6 +214,7 @@ YES_NO_FR = {"true": "oui", "false": "non"}
 UNALLOCATED_REASON_FR = {
     "MISSING_BASIS": "Base de ventilation manquante (poids, volume ou valeur)",
     "MISSING_DUTY_RATE": "Taux de droits manquant",
+    "MISSING_FX_RATE": "Taux de change manquant",
     "INVALID_MANUAL_SPLIT": "Répartition manuelle invalide",
     "NO_TARGET": "Aucun chargement visé",
     "ALL_WEIGHTS_ZERO": "Toutes les bases de ventilation sont nulles",
@@ -253,6 +255,7 @@ VALUES_FR: dict[str, dict[str, str]] = {
     "tracking_state": TRACKING_STATE_FR,
     "row_type": ROW_TYPE_FR,
     "period_basis": PERIOD_BASIS_FR,
+    "fob_missing": {"FX_RATE_MISSING": "Commande sans taux de change"},
 }
 
 

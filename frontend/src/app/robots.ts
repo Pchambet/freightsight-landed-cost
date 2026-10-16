@@ -1,14 +1,14 @@
 import type { MetadataRoute } from "next";
 import { site } from "@/lib/site";
 
-// Only the three marketing pages are for search engines. Every application segment is listed
+// Only the marketing and legal pages are for search engines. Every application segment is listed
 // (proxy.ts sends a crawler to /sign-in anyway): a new segment under (app) belongs here too.
 // The sitemap URL follows site.url, so it moves with the domain instead of going stale.
 export default function robots(): MetadataRoute.Robots {
   return {
     rules: {
       userAgent: "*",
-      allow: ["/$", "/securite", "/design-partner"],
+      allow: ["/$", "/securite", "/design-partner", "/confidentialite", "/mentions-legales", "/cgv"],
       disallow: [
         "/r/",
         "/overview",

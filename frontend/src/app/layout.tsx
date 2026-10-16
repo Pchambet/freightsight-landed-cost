@@ -1,10 +1,10 @@
 import { ClerkProvider } from "@clerk/nextjs";
-import { enUS, frFR } from "@clerk/localizations";
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { NextIntlClientProvider } from "next-intl";
 import { getLocale, getTranslations } from "next-intl/server";
 import { Toaster } from "sonner";
+import { clerkLocalization } from "@/lib/clerkLocalization";
 import { site } from "@/lib/site";
 import "./globals.css";
 
@@ -35,7 +35,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             would only make those pages heavier. The application's own layout provides the messages its
             client components use; a client component outside it brings its own (see ProductShowcase). */}
         <NextIntlClientProvider messages={null}>
-          <ClerkProvider localization={locale === "fr" ? frFR : enUS} taskUrls={{ "choose-organization": "/choose-organization" }} afterSignOutUrl="/">
+          <ClerkProvider localization={clerkLocalization(locale)} taskUrls={{ "choose-organization": "/choose-organization" }} afterSignOutUrl="/">
             {children}
             <Toaster position="top-right" richColors />
           </ClerkProvider>

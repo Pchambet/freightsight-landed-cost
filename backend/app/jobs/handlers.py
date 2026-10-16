@@ -8,6 +8,7 @@ Level Security applies to it too. Nothing here reads across organizations.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from collections.abc import Callable, Iterator
@@ -26,7 +27,7 @@ from app.core.settings import get_settings
 from app.core.tenancy import TenantSession, set_current_org
 from app.domain.alerts import codes
 from app.domain.alerts.notifier import Notification, Notifier, make_notifier
-from app.domain.alerts.service import REMIND_UNTIL_DAYS, raise_alert, raise_dnd_risk_alert
+from app.domain.alerts.service import REMIND_UNTIL_DAYS, raise_alert, restate_dnd_risk
 from app.domain.documents.registry import get_store
 from app.domain.fx.service import FxService
 from app.domain.invoices import service as invoices_service
@@ -37,13 +38,13 @@ from app.domain.models import (
     AlertSeverity,
     Container,
     ContainerMilestone,
-    DndRisk,
     ErpSyncStatus,
     EtaHistory,
     Invoice,
     InvoiceStatus,
     Membership,
     Organization,
+    SampleObject,
     TrackingEvent,
     TrackingState,
     TrackingSubscription,
@@ -55,7 +56,7 @@ from app.domain.tracking.ports import ProviderNotConfigured, ProviderUnavailable
 from app.domain.tracking.ports import TrackingProvider as _TrackingProvider
 from app.domain.tracking.registry import get_provider
 from app.domain.tracking.service import ingest, refresh
-from app.domain.tracking.state import ETA_SHIFT_HOURS, ETA_WARNING_HOURS, derive_dnd, risk_rose
+from app.domain.tracking.state import ETA_SHIFT_HOURS, ETA_WARNING_HOURS
 
 logger = logging.getLogger(__name__)
 
@@ -586,12 +587,8 @@ def recompute_dnd_risk(db: Session, *, now: datetime | None = None) -> int:
                 )
             )
             for container in containers:
-                before = container.dnd_risk
-                derive_dnd(container, org, moment)
-                if container.dnd_risk != before:
+                if restate_dnd_risk(db, org, container, moment):
                     changed += 1
-                if risk_rose(before, container.dnd_risk) or container.dnd_risk is DndRisk.INCURRING:
-                    raise_dnd_risk_alert(db, org, container, moment)
             db.commit()
     return changed
 
@@ -742,6 +739,85 @@ def extract_invoice(db: Session, org_id: UUID, invoice_id: UUID) -> str:
             return InvoiceStatus.FAILED.value
         db.commit()
         return invoice.status.value
+
+
+# ---------------------------------------------------------------------------- stalled jobs
+
+#: Procrastinate's workers beat every 10 s; one silent this long is gone, not busy on a long PDF.
+STALLED_AFTER_SECONDS = 300
+#: A job is re-queued this many times after its worker died under it, then given up on: a document
+#: that runs the worker out of memory would otherwise take it down every ten minutes, for ever.
+MAX_STALLED_RETRIES = 2
+
+
+def recover_stalled_jobs(db: Session, *, scheduled: set[str]) -> tuple[int, int]:
+    """Deal with the jobs a dead worker left `doing`. Returns (re-queued, given up).
+
+    A worker killed mid-job — out of memory, a redeploy, the host going away — never closes its job,
+    and Procrastinate fetches no job whose lock a `doing` one holds: the invoice being read stayed
+    "being read" for good, and its Retry queued a job that never ran. Nothing else notices, because
+    nothing fails.
+
+    A job the person asked for again meanwhile (same queueing lock, waiting) is closed, so that theirs
+    runs. A scheduled one is closed too: its next tick does the same work, and replaying an old tick
+    would write an old moment over a newer one. Anything else is queued again, up to
+    `MAX_STALLED_RETRIES` times; after that it is closed and an invoice it was reading says FAILED,
+    which is where the screen offers Retry. Procrastinate's own queries, in the caller's transaction.
+    """
+    from procrastinate import sql
+    from psycopg.rows import dict_row
+
+    requeued = given_up = 0
+    connection = db.connection().connection.driver_connection
+    assert connection is not None  # a checked-out connection always has its driver's
+    with connection.cursor(row_factory=dict_row) as cursor:
+        cursor.execute(
+            sql.queries["select_stalled_jobs_by_heartbeat"],
+            {"queue": None, "task_name": None, "seconds_since_heartbeat": STALLED_AFTER_SECONDS},
+        )
+        for job in cursor.fetchall():
+            asked_again = (
+                job["queueing_lock"] is not None
+                and cursor.execute(
+                    "SELECT 1 FROM procrastinate_jobs WHERE queueing_lock = %s AND status = 'todo'",
+                    (job["queueing_lock"],),
+                ).fetchone()
+            )
+            if asked_again or job["task_name"] in scheduled or job["attempts"] >= MAX_STALLED_RETRIES:
+                cursor.execute(
+                    sql.queries["finish_job"], {"job_id": job["id"], "status": "failed", "delete_job": False}
+                )
+                logger.warning("gave up on stalled job %s (%s)", job["id"], job["task_name"])
+                if job["task_name"] == "invoices.extract" and not asked_again:
+                    _reading_abandoned(db, job["args"])
+                given_up += 1
+            else:
+                cursor.execute(
+                    sql.queries["retry_job"],
+                    {"job_id": job["id"], "retry_at": datetime.now(UTC), "new_priority": None,
+                     "new_queue_name": None, "new_lock": None},
+                )  # fmt: skip
+                logger.warning("re-queued stalled job %s (%s)", job["id"], job["task_name"])
+                requeued += 1
+    db.commit()
+    return requeued, given_up
+
+
+def _reading_abandoned(db: Session, args: dict[str, str]) -> None:
+    org = db.get(Organization, UUID(args["org_id"]))
+    if org is None:
+        return
+    with tenant(db, org):
+        invoice = db.scalar(
+            select(Invoice).where(
+                Invoice.id == UUID(args["invoice_id"]),
+                Invoice.status.in_((InvoiceStatus.UPLOADED, InvoiceStatus.EXTRACTING)),
+            )
+        )
+        if invoice is not None:
+            invoice.status = InvoiceStatus.FAILED
+            invoice.error = f"the worker stopped while reading this document, {MAX_STALLED_RETRIES + 1} times"
+            db.flush()
 
 
 # ---------------------------------------------------------------------------- ERP
@@ -1010,30 +1086,68 @@ def weekly_reminder_due(db: Session, moment: datetime) -> bool:
 
 
 def check_backup_freshness(
+    db: Session | None = None,
     *,
     now: datetime | None = None,
     env: dict[str, str] | None = None,
     client: Any | None = None,
 ) -> str:
-    """Look at the bucket rather than at the job that is supposed to fill it.
+    """Look at what the backups left behind rather than at the job that is supposed to make them.
 
     Returns `ok`, `skipped`, `missing`, `stale` or `shrunk`. The nightly backup already fails loudly
     when it runs and cannot finish — but the failure mode that matters is the one where it stops
     running at all, or where a credential is removed: then nothing fails, because nothing happens,
-    and the only trace is an absence in a bucket nobody opens. A backup that suddenly holds a third
-    less than the one before is the other silent one: a dump taken against the wrong database, or a
-    `pg_dump` that stopped early and still exited zero.
+    and the only trace is an absence nobody looks at. A backup that suddenly holds a third less than
+    the one before is the other silent one: a dump taken against the wrong database, or a `pg_dump`
+    that stopped early and still exited zero.
 
-    Skipped in silence when there is no S3 configuration, because that is a development machine.
+    The bucket when this process can read it; otherwise the row each successful backup writes in
+    `job_runs` — production's worker holds no storage credentials, and the check used to skip there
+    every night. Skipped only off production with nothing recorded: a development machine.
     """
+    from app.ops.backup import RUN_NAME
+
+    source = env if env is not None else dict(os.environ)
+    moment = now or datetime.now(UTC)
+    if all(source.get(name) for name in ("SCW_ACCESS_KEY", "SCW_SECRET_KEY", "SCW_BUCKET")):
+        found = _newest_in_bucket(source, client)
+        where = "the bucket"
+    elif db is not None:
+        found = _newest_recorded(db)
+        where = f"job_runs.{RUN_NAME}"
+    else:
+        found, where = None, ""
+    if found is None:
+        if where != "the bucket" and source.get("APP_ENV") != "prod":
+            logger.info("backup freshness not checked: no backup configured on this deployment")
+            return "skipped"
+        logger.error("no backup at all", extra={"looked_in": where})
+        return "missing"
+    key, taken, size, previous = found
+    if moment - taken > BACKUP_MAX_AGE:
+        logger.error(
+            "the newest backup is older than the window",
+            extra={"key": key, "taken_at": taken.isoformat(), "hours": BACKUP_MAX_AGE / HOUR},
+        )
+        return "stale"
+    if previous and size < previous * BACKUP_SHRINK_RATIO:
+        logger.error(
+            "the newest backup is much smaller than the one before it",
+            extra={"key": key, "size_bytes": size, "previous_bytes": previous},
+        )
+        return "shrunk"
+    logger.info("backup is fresh", extra={"key": key, "size_bytes": size})
+    return "ok"
+
+
+#: The newest backup: its key, when it was taken, its size, and the size of the one before it.
+NewestBackup = tuple[str, datetime, int, int | None]
+
+
+def _newest_in_bucket(source: dict[str, str], client: Any | None) -> NewestBackup | None:
     from app.adapters.s3 import S3Client
     from app.ops.backup import KEY_PREFIX, KEY_RE
 
-    source = env if env is not None else dict(os.environ)
-    if not all(source.get(name) for name in ("SCW_ACCESS_KEY", "SCW_SECRET_KEY", "SCW_BUCKET")):
-        logger.info("backup freshness not checked: no bucket configured on this deployment")
-        return "skipped"
-    moment = now or datetime.now(UTC)
     prefix = f"{KEY_PREFIX}/{source.get('APP_ENV', 'dev')}/"
     s3 = client or S3Client(
         source["SCW_BUCKET"],
@@ -1046,37 +1160,59 @@ def check_backup_freshness(
     # is not a backup taken today.
     dated = sorted((obj for obj in s3.list(prefix) if KEY_RE.search(obj.key)), key=lambda o: o.key)
     if not dated:
-        logger.error("no backup in the bucket at all", extra={"prefix": prefix})
-        return "missing"
+        return None
     newest = dated[-1]
     match = KEY_RE.search(newest.key)
     assert match is not None  # the filter above just proved it
     year, month, day, hhmm = match.groups()
     taken = datetime(int(year), int(month), int(day), int(hhmm[:2]), int(hhmm[2:]), tzinfo=UTC)
-    if moment - taken > BACKUP_MAX_AGE:
-        logger.error(
-            "the newest backup is older than the window",
-            extra={"key": newest.key, "taken_at": taken.isoformat(), "hours": BACKUP_MAX_AGE / HOUR},
-        )
-        return "stale"
-    if len(dated) > 1 and dated[-2].size and newest.size < dated[-2].size * BACKUP_SHRINK_RATIO:
-        logger.error(
-            "the newest backup is much smaller than the one before it",
-            extra={"key": newest.key, "size_bytes": newest.size, "previous_bytes": dated[-2].size},
-        )
-        return "shrunk"
-    logger.info("backup is fresh", extra={"key": newest.key, "size_bytes": newest.size})
-    return "ok"
+    return newest.key, taken, newest.size, dated[-2].size if len(dated) > 1 else None
+
+
+def _newest_recorded(db: Session) -> NewestBackup | None:
+    from app.ops.backup import RUN_NAME
+
+    row = db.execute(
+        text("SELECT last_run_at, detail FROM job_runs WHERE name = :name"), {"name": RUN_NAME}
+    ).first()
+    if row is None:
+        return None
+    detail = json.loads(row.detail or "{}")
+    return (
+        detail.get("key", ""),
+        row.last_run_at,
+        int(detail.get("size_bytes") or 0),
+        detail.get("previous_bytes"),
+    )
+
+
+def record_backup_freshness(
+    db: Session, *, now: datetime | None = None, env: dict[str, str] | None = None
+) -> str:
+    """Check, and leave the verdict where Settings → service status and `python -m app.doctor` read it."""
+    moment = now or datetime.now(UTC)
+    outcome = check_backup_freshness(db, now=moment, env=env)
+    if outcome != "skipped":
+        note_job_run(db, BACKUP_FRESHNESS_JOB, moment, failures=0 if outcome == "ok" else 1, detail=outcome)
+    return outcome
 
 
 # ---------------------------------------------------------------------------- helpers for the tasks
 
 
 def unnotified_alerts(db: Session, org: Organization) -> list[Alert]:
+    """What the next digest says. Never the demo dataset's alerts, nor any about its boxes: those are
+    for the screen a prospect is exploring, not for their inbox."""
+    sample = select(SampleObject.object_id).where(SampleObject.org_id == org.id)
     return list(
         db.scalars(
             select(Alert)
-            .where(Alert.org_id == org.id, Alert.notified_at.is_(None))
+            .where(
+                Alert.org_id == org.id,
+                Alert.notified_at.is_(None),
+                Alert.id.not_in(sample),
+                or_(Alert.container_id.is_(None), Alert.container_id.not_in(sample)),
+            )
             .order_by(Alert.created_at)
         )
     )

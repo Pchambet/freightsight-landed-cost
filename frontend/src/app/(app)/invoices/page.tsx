@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { getLocale, getTranslations } from "next-intl/server";
 import { Receipt } from "lucide-react";
-import { Card, PageHeader, btnPrimary, td, tdRight, th, thRight } from "@/components/layout/AppShell";
+import { Card, PageHeader, td, tdRight, th, thRight } from "@/components/layout/AppShell";
 import ConfidenceBadge from "@/components/shared/ConfidenceBadge";
 import UploadForm from "@/features/invoices/UploadForm";
 import WorkflowNextStep from "@/features/workflow/WorkflowNextStep";
@@ -41,7 +41,7 @@ export default async function InvoicesPage({ searchParams }: { searchParams: Pro
   return (
     <>
       <PageHeader title={t("title")} subtitle={t("subtitle", { review, total: invoices.length })} />
-      <WorkflowNextStep step={hubStep} />
+      {hubStep ? <WorkflowNextStep step={hubStep} /> : null}
       <Card title={t("upload.title")} right={<span className="text-xs text-slate-500 max-w-md text-right">{t("upload.hint", { max: fileSize(MAX_UPLOAD_BYTES, locale) })}</span>} className="mb-6">
         <div id="depot" className="scroll-mt-6">
           <UploadForm />
@@ -65,8 +65,7 @@ export default async function InvoicesPage({ searchParams }: { searchParams: Pro
               {invoices.length === 0 ? (
                 <tr><td colSpan={7} className="px-5 py-14 text-center text-slate-500">
                   <Receipt className="w-10 h-10 mx-auto mb-3 text-slate-300" aria-hidden />
-                  <p className="text-sm text-slate-600 mb-4">{t("empty")}</p>
-                  <Link href="#depot" className={btnPrimary}>{t("emptyAction")}</Link>
+                  <p className="text-sm text-slate-600">{t("empty")}</p>
                 </td></tr>
               ) : invoices.map((i) => (
                 <tr key={i.id} className="hover:bg-slate-50">
@@ -75,7 +74,7 @@ export default async function InvoicesPage({ searchParams }: { searchParams: Pro
                   <td className={`${td} text-slate-600`}>{dateShort(i.invoice_date, locale)}</td>
                   <td className={tdRight}>{i.total_amount && i.currency ? money(i.total_amount, i.currency, locale) : "—"}</td>
                   <td className={td}><span className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${STATUS_STYLE[i.status]}`}>{statusLabel(i.status)}</span></td>
-                  <td className={tdRight}><ConfidenceBadge value={i.confidence} band={(i as { confidence_band?: "HIGH" | "MEDIUM" | "LOW" }).confidence_band} confirmed={i.status === "CONFIRMED"} /></td>
+                  <td className={tdRight}><ConfidenceBadge value={i.confidence} band={i.confidence_band} confirmed={i.status === "CONFIRMED"} /></td>
                   <td className={`${td} text-xs text-slate-500 max-w-[16rem] truncate`}>{i.filename ?? "—"}</td>
                 </tr>
               ))}

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterator
 from decimal import Decimal
 
 import pytest
@@ -14,11 +15,11 @@ from invoice_fixtures import (
     USD_INVOICE,
 )
 from pdfs import make_pdf, make_pdf_without_text
-from sqlalchemy import select, text
+from sqlalchemy import Engine, select, text
 from sqlalchemy.orm import Session
 
 from app.core.tenancy import set_current_org
-from app.domain.models import Cost, Document, Invoice, Organization
+from app.domain.models import Cost, Document, Invoice, InvoiceLine, InvoiceStatus, Organization
 from app.jobs import handlers
 
 
@@ -267,6 +268,108 @@ def test_a_confirmed_invoice_is_history(client: TestClient, db: Session, org: Or
         ).status_code
         == 404
     )
+    batch = client.patch(
+        f"/api/v1/invoices/{invoice_id}/lines", json={"lines": [{"id": lines[1]["id"], "accepted": True}]}
+    )
+    assert batch.status_code == 404
+
+
+# ---------------------------------------------------------------------------- several lines at once
+
+
+def test_every_line_kept_in_one_call_is_kept(client: TestClient, db: Session, org: Organization) -> None:
+    """« Keep the 4 lines » keeps 4 lines: one call, one lock on the invoice, one transaction."""
+    invoice_id, lines = review(client, db, org)
+    other = seed_container(client, "TGHU1234567")
+    res = client.patch(
+        f"/api/v1/invoices/{invoice_id}/lines",
+        json={"lines": [{"id": line["id"], "accepted": True, "target_id": other} for line in lines]},
+    )
+    assert res.status_code == 200, res.text
+    assert [(ln["accepted"], ln["target_id"]) for ln in res.json()["lines"]] == [(True, other)] * len(lines)
+    after = client.get(f"/api/v1/invoices/{invoice_id}").json()
+    assert all(ln["accepted"] and ln["target_id"] == other for ln in after["lines"])
+
+
+def test_one_line_that_is_not_on_the_invoice_refuses_the_whole_batch(
+    client: TestClient, db: Session, org: Organization
+) -> None:
+    invoice_id, lines = review(client, db, org)
+    stranger, repeated = str(uuid.uuid4()), lines[1]["id"]
+    decisions = [{"id": line["id"], "accepted": True} for line in lines] + [
+        {"id": stranger, "accepted": True},
+        {"id": repeated, "accepted": False},
+    ]
+    res = client.patch(f"/api/v1/invoices/{invoice_id}/lines", json={"lines": decisions})
+    assert res.status_code == 422
+    body = res.json()
+    assert body["code"] == "INVOICE_LINES_REFUSED"
+    assert [(e["field"], e["code"]) for e in body["errors"]] == [
+        (stranger, "INVOICE_LINE_NOT_FOUND"),
+        (repeated, "INVOICE_LINE_REPEATED"),
+    ]
+    # nothing was applied, not even the lines that were fine
+    after = client.get(f"/api/v1/invoices/{invoice_id}").json()
+    assert not any(ln["accepted"] for ln in after["lines"])
+
+
+@pytest.fixture
+def committed_invoice(engine: Engine) -> Iterator[tuple[uuid.UUID, uuid.UUID, list[uuid.UUID]]]:
+    """An invoice another connection can see, and so lock: the per-test transaction hides its rows from
+    every other connection. Requested before `client`, it is cleaned up after that transaction ends."""
+    org_id = uuid.uuid4()
+    with Session(engine) as s:
+        s.add(Organization(id=org_id, name="Busy invoice", base_currency="EUR"))
+        s.flush()
+        doc = Document(
+            org_id=org_id,
+            storage="postgres",
+            storage_key=f"busy/{org_id}",
+            content_type="application/pdf",
+            size_bytes=1,
+            sha256=org_id.hex,
+        )
+        s.add(doc)
+        s.flush()
+        invoice = Invoice(org_id=org_id, document_id=doc.id, status=InvoiceStatus.NEEDS_REVIEW)
+        s.add(invoice)
+        s.flush()
+        lines = [
+            InvoiceLine(
+                org_id=org_id, invoice_id=invoice.id, line_no=n, amount=Decimal("10.00"), currency="EUR"
+            )
+            for n in (1, 2)
+        ]
+        s.add_all(lines)
+        s.commit()
+        ids = (org_id, invoice.id, [ln.id for ln in lines])
+    yield ids
+    with engine.begin() as conn:
+        for table in ("invoice_lines", "invoices", "documents"):
+            conn.execute(text(f"DELETE FROM {table} WHERE org_id = :o"), {"o": org_id})
+        conn.execute(text("DELETE FROM organizations WHERE id = :o"), {"o": org_id})
+
+
+def test_a_batch_on_an_invoice_held_elsewhere_is_refused_at_once(
+    committed_invoice: tuple[uuid.UUID, uuid.UUID, list[uuid.UUID]], client: TestClient, engine: Engine
+) -> None:
+    """The reading job, or another tab, holds the invoice: the batch is not kept waiting and changes
+    nothing — then goes through once the row is free."""
+    org_id, invoice_id, line_ids = committed_invoice
+    headers = {"X-Org-Id": str(org_id)}
+    decisions = {"lines": [{"id": str(i), "accepted": True} for i in line_ids]}
+    with engine.connect() as other:
+        other.execute(text("SELECT id FROM invoices WHERE id = :i FOR UPDATE"), {"i": invoice_id})
+        busy = client.patch(f"/api/v1/invoices/{invoice_id}/lines", json=decisions, headers=headers)
+        other.rollback()
+    assert (busy.status_code, busy.json()["code"]) == (409, "INVOICE_BUSY")
+    assert not any(
+        ln["accepted"] for ln in client.get(f"/api/v1/invoices/{invoice_id}", headers=headers).json()["lines"]
+    )
+
+    res = client.patch(f"/api/v1/invoices/{invoice_id}/lines", json=decisions, headers=headers)
+    assert res.status_code == 200, res.text
+    assert all(ln["accepted"] for ln in res.json()["lines"])
 
 
 # ---------------------------------------------------------------------------- adding what was missed

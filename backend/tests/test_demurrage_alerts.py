@@ -418,3 +418,19 @@ def test_a_container_whose_discharge_was_entered_is_left_in_peace(
     db.commit()
 
     assert handlers.remind_manual_tracking(db, now=NOW) == 0
+
+
+def test_a_discharge_typed_on_the_container_screen_is_alerted_at_once(
+    client: TestClient, db: Session, org: Organization
+) -> None:
+    """Without a tracking provider this is how a discharge arrives. Typed a day before the last free
+    day, the box was HIGH from the start, so the morning pass found no rise and the J-1 warning was
+    never sent: the first word came once the money was already running."""
+    container_id = make_container(client)
+    discharged = (datetime.now(UTC) - timedelta(days=4)).isoformat()
+    res = client.patch(f"/api/v1/containers/{container_id}", json={"discharged_at": discharged})
+    assert res.status_code == 200, res.text
+    assert res.json()["dnd_risk"] == "HIGH"
+
+    (alert,) = dnd_alerts(db)
+    assert (alert.container_id, alert.payload["risk"]) == (container_id, "HIGH")

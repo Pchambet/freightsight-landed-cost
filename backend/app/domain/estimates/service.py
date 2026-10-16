@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 from app.core.money import q2, to_base
 from app.domain.costing import engine, entry
 from app.domain.costing.service import Computation, compute
+from app.domain.costing.value import total
 from app.domain.fx.service import FxService
 from app.domain.models import (
     Container,
@@ -62,8 +63,11 @@ class Estimated:
 
 def basis_for(comp: Computation, container_id: UUID) -> Basis:
     loads = [ld for ld in comp.loads if ld.container_id == container_id]
+    # An order with no exchange rate leaves the box's value unknown, and an unknown basis estimates
+    # nothing (see `amount_for`): the other lines' value alone would be an estimate too low.
+    fob = total(ld.fob for ld in loads)
     return Basis(
-        fob_base=sum((ld.fob for ld in loads), Decimal("0.00")),
+        fob_base=Decimal("0.00") if fob is None else fob,
         weight_kg=sum(((ld.unit_weight_kg or Decimal(0)) * ld.quantity for ld in loads), Decimal(0)),
         volume_cbm=sum(((ld.unit_volume_cbm or Decimal(0)) * ld.quantity for ld in loads), Decimal(0)),
     )
@@ -119,9 +123,9 @@ def theoretical_duty(comp: Computation, container_id: UUID, cards: list[RateCard
     used when the real customs invoice arrives.
     """
     loads = [ld for ld in comp.loads if ld.container_id == container_id]
-    if not loads:
-        return None
-    total = Decimal("0.00")
+    if not loads or not all(ld.value_known for ld in loads):
+        return None  # no customs value without the goods' value
+    duty = Decimal("0.00")
     seen_rate = False
     for load in loads:
         rate = load.duty_rate if load.duty_rate is not None else duty_rate_for(_hs_code(comp, load), cards)
@@ -131,8 +135,8 @@ def theoretical_duty(comp: Computation, container_id: UUID, cards: list[RateCard
         # Each line's customs value as the engine gives it after its first pass: its FOB and what it
         # received of the freight and insurance, spread by their own methods — by weight, by volume —
         # not by a share of FOB, which is the same only when the organization spreads by value.
-        total += comp.result.cif.get(load.id, load.fob) * rate
-    return q2(total) if seen_rate and total > 0 else None
+        duty += comp.result.cif[load.id] * rate
+    return q2(duty) if seen_rate and duty > 0 else None
 
 
 def _hs_code(comp: Computation, load: engine.Load) -> str | None:

@@ -5,19 +5,26 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import shutil
 import subprocess
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
 import pytest
 from sqlalchemy import Engine, create_engine, text
+from sqlalchemy.orm import Session
 
+from app import backup as command  # imported here: importing it configures logging, which caplog survives
 from app.adapters.s3 import S3Client, S3NotFound
+from app.core.tenancy import set_current_org
+from app.domain.models import Organization, Supplier
 from app.ops.backup import (
     MAGIC,
     BackupError,
+    BackupResult,
     decode_key,
     decrypt,
     dump,
@@ -267,55 +274,116 @@ def test_listing_follows_the_continuation_token() -> None:
 
 PG_DUMP = os.environ.get("PG_DUMP_BIN", "pg_dump")
 PG_RESTORE = os.environ.get("PG_RESTORE_BIN", "pg_restore")
+APP_ROLE = "freightsight_app"
 
 
-def pg_tools_available(database_url: str) -> bool:
-    """pg_dump refuses a server newer than itself, so the major versions have to match."""
-    if not (shutil.which(PG_DUMP) or os.path.exists(PG_DUMP)):
-        return False
-    if not (shutil.which(PG_RESTORE) or os.path.exists(PG_RESTORE)):
-        return False
-    try:
-        out = subprocess.run([PG_DUMP, "--version"], capture_output=True, check=True).stdout
-    except Exception:
-        return False
-    client_major = out.decode().strip().split()[-1].split(".")[0]
+def pg_tools_problem(database_url: str) -> str | None:
+    """Why the round trip cannot run here, or None. pg_dump refuses a server newer than itself, so the
+    major versions have to match — and on a Debian or Ubuntu host `pg_dump` is a wrapper that picks
+    the client of the local cluster, not the newest one installed."""
+    for tool in (PG_DUMP, PG_RESTORE):
+        if not (shutil.which(tool) or os.path.exists(tool)):
+            return f"{tool} is not installed"
+    out = subprocess.run([PG_DUMP, "--version"], capture_output=True, check=False).stdout.decode()
+    found = re.search(r"\(PostgreSQL\) (\d+)", out)
     # SQLAlchemy engines keep the +psycopg driver: stripping it picks the psycopg2 dialect, which is
     # not installed. Only the string handed to pg_dump/pg_restore loses the driver.
     engine = create_engine(database_url)
     with engine.connect() as connection:
         server_major = str(connection.execute(text("SHOW server_version_num")).scalar())[:2]
     engine.dispose()
-    return client_major == server_major
+    if found is None or found.group(1) != server_major:
+        return f"{PG_DUMP} is {out.strip() or 'unreadable'}, the server is {server_major}"
+    return None
 
 
-@pytest.mark.skipif(
-    not os.environ.get("TEST_DATABASE_URL"),
-    reason="needs a database URL the dump can be pointed at",
-)
-def test_a_dump_restores_with_every_row(engine: Engine, database_url: str) -> None:
-    """The only test that proves a backup is a backup: dump it, restore it elsewhere, count."""
-    if not pg_tools_available(database_url):
-        pytest.skip("pg_dump/pg_restore of the server's major version are not installed")
+def cannot_run(reason: str) -> None:
+    """A skip on a laptop, a failure in CI: the round trip skipped there for weeks with nobody told."""
+    if os.environ.get("CI") == "true":
+        pytest.fail(f"the backup round trip must run in CI: {reason}")
+    pytest.skip(reason)
 
-    counts_before = table_counts(engine)
-    archive = dump(database_url, PG_DUMP)
-    assert archive.startswith(b"PGDMP")
 
+def test_a_restored_dump_is_readable_by_the_application(engine: Engine, database_url: str) -> None:
+    """The only test that proves a backup is a backup: dump it, restore it elsewhere, and read it the
+    way the API will — as `freightsight_app`, under row-level security. Counting rows as the owner
+    passed on a copy the application could not open: the dump carries no privileges."""
+    problem = pg_tools_problem(database_url)
+    if problem:
+        cannot_run(problem)
+
+    # One organization's row, committed so that the dump sees it: the copy has to show it to the
+    # application role, under that organization, and to nobody else.
+    seed = create_engine(database_url)
+    with Session(seed) as session:
+        org = Organization(name="Round trip")
+        session.add(org)
+        session.flush()
+        set_current_org(session, org.id)
+        session.add(Supplier(org_id=org.id, name="Ningbo Restored"))
+        session.commit()
+        org_id = org.id
     target = f"restore_check_{uuid.uuid4().hex[:8]}"
     admin = create_engine(database_url, isolation_level="AUTOCOMMIT")
-    with admin.connect() as connection:
-        connection.execute(text(f'CREATE DATABASE "{target}"'))
     try:
+        counts_before = table_counts(engine)
+        privileges_before = app_privileges(engine)
+        archive = dump(database_url, PG_DUMP)
+        assert archive.startswith(b"PGDMP")
+
+        with admin.connect() as connection:
+            connection.execute(text(f'CREATE DATABASE "{target}"'))
         target_url = database_url.rsplit("/", 1)[0] + f"/{target}"
         restore(target_url, encrypt_round_trip(archive), PG_RESTORE)  # restore() strips the driver
         restored = create_engine(target_url)
         assert table_counts(restored) == counts_before
+        assert app_privileges(restored) == privileges_before
+        with restored.connect() as connection:
+            connection.execute(text(f"SET ROLE {APP_ROLE}"))
+            connection.execute(text("SELECT set_config('app.org_id', :org, false)"), {"org": str(org_id)})
+            assert list(connection.scalars(text("SELECT name FROM suppliers"))) == ["Ningbo Restored"]
+            connection.execute(
+                text("SELECT set_config('app.org_id', :org, false)"), {"org": str(uuid.uuid4())}
+            )
+            assert list(connection.scalars(text("SELECT name FROM suppliers"))) == []
         restored.dispose()
     finally:
         with admin.connect() as connection:
             connection.execute(text(f'DROP DATABASE IF EXISTS "{target}" WITH (FORCE)'))
+            connection.execute(text("DELETE FROM suppliers WHERE org_id = :org"), {"org": org_id})
+            connection.execute(text("DELETE FROM organizations WHERE id = :org"), {"org": org_id})
         admin.dispose()
+        seed.dispose()
+
+
+def app_privileges(engine: Engine) -> set[tuple[str, str, str]]:
+    """Every privilege the application role and PUBLIC hold in the schema: tables, sequences,
+    functions (one of them a SECURITY DEFINER door through RLS), the schema, and the defaults that
+    future migrations' tables inherit."""
+    query = f"""
+        WITH acl AS (
+            SELECT 'relation ' || c.relname AS object,
+                   (aclexplode(coalesce(c.relacl, acldefault(
+                        CASE c.relkind WHEN 'S' THEN 's'::"char" ELSE 'r'::"char" END, c.relowner)))).*
+              FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+             WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'S', 'v', 'm')
+            UNION ALL
+            SELECT 'function ' || p.oid::regprocedure::text,
+                   (aclexplode(coalesce(p.proacl, acldefault('f', p.proowner)))).*
+              FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+             WHERE n.nspname = 'public'
+            UNION ALL
+            SELECT 'schema ' || n.nspname, (aclexplode(coalesce(n.nspacl, acldefault('n', n.nspowner)))).*
+              FROM pg_namespace n WHERE n.nspname = 'public'
+            UNION ALL
+            SELECT 'default ' || d.defaclobjtype::text, (aclexplode(d.defaclacl)).*
+              FROM pg_default_acl d
+        )
+        SELECT object, CASE grantee WHEN 0::oid THEN 'PUBLIC' ELSE grantee::regrole::text END, privilege_type
+          FROM acl WHERE grantee = 0::oid OR grantee = '{APP_ROLE}'::regrole::oid
+    """
+    with engine.connect() as connection:
+        return {(row[0], row[1], row[2]) for row in connection.execute(text(query))}
 
 
 def encrypt_round_trip(archive: bytes) -> bytes:
@@ -362,3 +430,32 @@ def test_the_success_line_is_structured_and_goes_to_stdout(
     assert success[0]["size_bytes"] > 0  # a field to filter on, not a sentence to match
     assert success[0]["plaintext_sha256"]
     assert "backup.succeeded" not in captured.err
+
+
+def test_the_nightly_command_records_its_backup_and_fails_loudly_when_it_cannot(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """`python -m app.backup`: the worker's freshness check reads the row this leaves, on the owner's
+    URL; an upload it could not record exits non-zero at ERROR, and Sentry refusing to start does not
+    stop the backup."""
+    url = "postgresql+psycopg://owner@db/fs"
+    monkeypatch.setenv("MIGRATIONS_DATABASE_URL", url)
+    result = BackupResult("backups/prod/k.dump.enc", 10, "", 1.0, [], datetime.now(UTC))
+    monkeypatch.setattr(command, "run", lambda: result)
+    recorded: list[tuple[str, BackupResult]] = []
+    monkeypatch.setattr(command, "record_success", lambda u, r: recorded.append((u, r)))
+
+    def no_sentry(_settings: object) -> bool:
+        raise RuntimeError("sentry is down")
+
+    monkeypatch.setattr(command, "init_sentry", no_sentry)
+    assert command.main() == 0
+    assert recorded == [(url, result)]
+
+    def cannot_record(_url: str, _result: BackupResult) -> None:
+        raise BackupError("written but could not be recorded")
+
+    monkeypatch.setattr(command, "record_success", cannot_record)
+    with caplog.at_level("ERROR"):
+        assert command.main() == 1
+    assert "could not be recorded" in caplog.text

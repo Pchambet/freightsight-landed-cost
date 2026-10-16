@@ -18,15 +18,19 @@ export default async function CostBreakdown({ report }: { report: LandedCostRepo
   const landed = Number(report.totals.landed);
   const coef = new Intl.NumberFormat(locale === "fr" ? "fr-FR" : "en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(landed / fob);
   const familyLabels = Object.fromEntries(COST_FAMILIES.map((f) => [f, tf(f)])) as Record<CostFamily, string>;
+  // An estimate is not a cost paid: the ratio still says so while estimates stand in for invoices.
+  const estimated = report.totals.estimated ?? "0.00";
+  const hasEstimates = Number(estimated) > 0;
 
   return (
     <Panel
       title={t("title")}
-      subtitle={t("subtitle", { landed: money(report.totals.landed, report.base_currency, locale) })}
+      subtitle={hasEstimates ? t("subtitleEstimated", { landed: money(report.totals.landed, report.base_currency, locale), estimated: money(estimated, report.base_currency, locale) }) : t("subtitle", { landed: money(report.totals.landed, report.base_currency, locale) })}
       right={
         <div className="text-right">
           <div className="text-[11px] uppercase tracking-wider text-slate-500">{t("coef")}</div>
           <div className="text-xl font-semibold text-slate-900 figure-proportional leading-tight">{coef}</div>
+          {hasEstimates ? <div className="text-[11px] font-medium text-violet-800">{t("coefEstimated")}</div> : null}
         </div>
       }
       className="print:break-inside-avoid"

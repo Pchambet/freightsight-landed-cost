@@ -96,7 +96,8 @@ def to_engine_load(row: ContainerLoad) -> engine.Load:
         po_id=po.id,
         po_line_id=line.id,
         quantity=row.quantity,
-        unit_price_base=q4(line.unit_price * po.fx_rate),
+        # No rate, no value: never the order's own figure read as if it were in the base currency.
+        unit_price_base=None if po.fx_rate is None else q4(line.unit_price * po.fx_rate),
         unit_weight_kg=line.unit_weight_kg,
         unit_volume_cbm=line.unit_volume_cbm,
         duty_rate=line.duty_rate,
@@ -153,6 +154,21 @@ def compute(
         lines={r.po_line.id: r.po_line for r in load_rows},
         pos={r.po_line.purchase_order.id: r.po_line.purchase_order for r in load_rows},
     )
+
+
+def charged_containers(comp: Computation) -> set[UUID]:
+    """The containers that at least one landed charge reaches, estimated or invoiced.
+
+    A container with goods and no charge at all has a "landed cost" equal to its FOB, which says
+    nothing about what landing it cost. Every landed figure leaves such a container out — its goods
+    stay in the FOB, a fact — and says how many it left out: this is the one place that decides which
+    they are. Import VAT is no charge here, as it is no landed cost anywhere.
+    """
+    return {
+        comp.load_rows[a.load_id].container_id
+        for a in comp.result.allocations
+        if a.amount_base and comp.cost_rows[a.cost_id].cost_type.value not in engine.EXCLUDED_FROM_LANDED
+    }
 
 
 def recompute_org(db: Session, org: Organization) -> Computation:

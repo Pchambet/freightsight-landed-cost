@@ -185,8 +185,8 @@ def checks(
                 "customer",
                 "BACKUPS_UNVERIFIED",
                 {"checked_at": checked.isoformat() if checked else ""},
-                fix="no recent successful backup check: look at the worker's `ops.backup_freshness` "
-                "job and at the bucket (SCW_* variables)",
+                fix="no recent successful backup check: look at the backup service's last run "
+                "(`ops.backup` in job_runs) and at the worker's `ops.backup_freshness` verdict",
             )
         )
 

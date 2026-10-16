@@ -157,9 +157,11 @@ def duplicate_cost_note(
     ).first()
     if existing is None:
         return None
+    # The amount as it was invoiced, next to its own currency: the base counter-value would be labelled
+    # with a currency it is not in.
     return (
         f"@duplicate_cost|{cost_type.value}|{note_field(existing.vendor)}|"
-        f"{note_field(existing.invoice_number)}|{existing.amount_base}|{existing.currency}|"
+        f"{note_field(existing.invoice_number)}|{existing.amount}|{existing.currency}|"
         f"{existing.scope.value}"
     )
 

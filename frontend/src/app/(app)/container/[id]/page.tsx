@@ -5,12 +5,13 @@ import Link from "next/link";
 import { AlertTriangle, Box, FileText, Info, LockKeyhole } from "lucide-react";
 import { PageHeader, btnSecondary } from "@/components/layout/AppShell";
 import Breadcrumb from "@/components/shared/Breadcrumb";
-import MetricLabel from "@/components/shared/MetricLabel";
 import CollapsibleSection from "@/components/shared/CollapsibleSection";
 import { MilestoneBadge, RiskBadge } from "@/components/shared/Badges";
 import { Money } from "@/components/shared/Money";
 import AllocationPanel from "@/features/costs/AllocationPanel";
 import CostBreakdown from "@/features/costs/CostBreakdown";
+import ReportTotals from "@/features/costs/ReportTotals";
+import FobMissing from "@/features/report/FobMissing";
 import UnitCostHighlight from "@/features/costs/UnitCostHighlight";
 import CostLedger from "@/features/costs/CostLedger";
 import OpenOnHash from "@/components/shared/OpenOnHash";
@@ -31,11 +32,7 @@ import { dateShort, daysUntil, money } from "@/lib/format";
 type Params = { params: Promise<{ id: string }> };
 
 const API_ERROR = "api_error";
-
-// `LandedCostReport.notes` (a rule applied to a cost that WAS allocated, e.g. duty spread on customs
-// value for lines with no tariff rate — see backend/app/api/v1/schemas.py::ReportNote). Typed here,
-// not in the generated schema, until it is regenerated from the OpenAPI document (needs_other_lane).
-type ReportNote = { cost_id: string; code: string; message: string; load_ids: string[]; load_labels: string[] };
+const TOTALS = ["fob", "allocated", "vat", "landed", "unallocated"] as const;
 
 async function load(id: string): Promise<{ container: Schemas["ContainerDetail"]; report: LandedCostReport; loads: LoadResponse[]; pos: PurchaseOrderSummary[]; shipmentRef: string | null; events: TrackingEventResponse[]; etaHistory: EtaHistoryResponse[]; subscription: Schemas["TrackingSubscriptionResponse"] | null; erpConnected: boolean; invoicesToReview: number } | null> {
   const c = await api.GET("/api/v1/containers/{container_id}", { params: { path: { container_id: id } } });
@@ -79,7 +76,9 @@ export default async function ContainerPage({ params }: Params) {
   const data = await load(containerId);
   if (!data) notFound();
   const { container, report, loads, pos, shipmentRef, events, etaHistory, subscription, erpConnected, invoicesToReview } = data;
-  const [t, errorCode, tg, tp, ts, locale] = await Promise.all([getTranslations("container"), getTranslations("errors"), getTranslations("glossary"), getTranslations("periods.container"), getTranslations("sheet"), getLocale()]);
+  const [t, errorCode, tp, ts, tm, locale] = await Promise.all([getTranslations("container"), getTranslations("errors"), getTranslations("periods.container"), getTranslations("sheet"), getTranslations("fobMissing"), getLocale()]);
+  // The first order of this box that has no exchange rate: where the missing value is set.
+  const unrated = report.lines.find((ln) => ln.fob_missing);
   const cur = report.base_currency;
   const revalidate = `/container/${container.id}`;
   const step = containerWorkflowStep(container, loads, report, invoicesToReview);
@@ -109,7 +108,8 @@ export default async function ContainerPage({ params }: Params) {
           <LockKeyhole className="w-4 h-4 shrink-0 text-slate-500" aria-hidden />
           <span className="text-slate-700">
             {tp("frozen", { month: periodTitle(container.closed_period, locale, true), frozen: money(container.frozen_landed ?? "0", cur, locale) })}{" "}
-            {Number(container.drift ?? 0) === 0 ? <span className="text-slate-500">{tp("noDrift")}</span> : <span className="font-medium text-amber-800">{tp("drift", { drift: signedMoney(container.drift ?? "0", (v) => money(v, cur, locale)) })}</span>}
+            {/* No drift can be said while one of its orders has no exchange rate: today's figure is unknown. */}
+            {container.drift === null || container.drift === undefined ? (report.fob_missing ? <span className="text-amber-800">{tm("line")}</span> : <span className="text-slate-500">{tp("noDrift")}</span>) : Number(container.drift) === 0 ? <span className="text-slate-500">{tp("noDrift")}</span> : <span className="font-medium text-amber-800">{tp("drift", { drift: signedMoney(container.drift, (v) => money(v, cur, locale)) })}</span>}
           </span>
           <Link href={`/periods/${container.closed_period}`} className="ml-auto text-blue-700 hover:underline">{tp("see")}</Link>
         </div>
@@ -134,12 +134,11 @@ export default async function ContainerPage({ params }: Params) {
 
       {/* `report.notes`: a rule applied to a cost that WAS allocated (e.g. duty spread on customs
           value for lines with no tariff rate) — kept apart from `warnings` on purpose, since a note
-          carries no amount and is never "non ventilé" (see needs_other_lane on report.notes). Read
-          through a narrow type until the generated client is regenerated to carry the field. */}
-      {(report as { notes?: ReportNote[] }).notes?.length ? (
+          carries no amount and is never "non ventilé". */}
+      {report.notes?.length ? (
         <div className="rounded-md border border-slate-200 bg-slate-50 text-slate-700 text-sm px-4 py-3 space-y-1 mb-6">
           <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">{t("notesTitle")}</div>
-          {((report as { notes?: ReportNote[] }).notes ?? []).map((n) => (
+          {(report.notes ?? []).map((n) => (
             <div key={n.cost_id} className="flex gap-2">
               <Info className="w-4 h-4 mt-0.5 shrink-0 text-slate-400" />
               <span>
@@ -151,16 +150,9 @@ export default async function ContainerPage({ params }: Params) {
         </div>
       ) : null}
 
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-6">
-        {(["fob", "allocated", "vat", "landed", "unallocated"] as const).map((k) => (
-          <div key={k} className="bg-white rounded-lg border border-slate-200 px-4 py-3">
-            <MetricLabel label={t(`totals.${k}`)} hint={tg(k)} />
-            <div className={`text-lg font-semibold tabular-nums mt-1 ${k === "unallocated" && report.totals.unallocated !== "0.00" ? "text-amber-700" : ""}`}>
-              <Money amount={report.totals[k]} currency={cur} />
-            </div>
-          </div>
-        ))}
-      </div>
+      <FobMissing lines={report.fob_missing_lines} href={unrated ? `/purchase-orders/${unrated.po_id}#taux` : "/purchase-orders"} className="mb-6" />
+
+      <ReportTotals report={report} keys={TOTALS} labels={Object.fromEntries(TOTALS.map((k) => [k, t(`totals.${k}`)])) as Record<(typeof TOTALS)[number], string>} />
 
       <div className="space-y-6 mb-6">
         <CostBreakdown report={report} />

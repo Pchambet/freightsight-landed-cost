@@ -58,21 +58,19 @@ export default async function InvoicePage({ params }: Params) {
   const inProgress = invoice.status === "UPLOADED" || invoice.status === "EXTRACTING";
   const isPdf = (invoice.filename ?? "").toLowerCase().endsWith(".pdf");
   const continueContainers = invoice.status === "CONFIRMED" ? containerLinksFromLines(lines, targets) : [];
-  const primaryContainer = continueContainers[0];
   // The other invoices waiting for review, in the order they were dropped: the next one is the first
   // dropped after this one — a batch is walked through in its own order — then back to the oldest.
   const waiting = (waitingRes.data ?? []).filter((i) => i.id !== invoice.id).sort((a, b) => a.created_at.localeCompare(b.created_at));
   const next = waiting.find((i) => i.created_at > invoice.created_at) ?? waiting[0];
   const detailStep = invoiceDetailStep(
     invoice.status,
-    primaryContainer ? { id: primaryContainer.id, number: primaryContainer.container_number } : undefined,
+    continueContainers.map((c) => ({ id: c.id, number: c.container_number })),
     next ? { id: next.id, waiting: waiting.length } : undefined,
   );
-  // `extractor_kind` (RULES/MODEL/UNKNOWN) and each line's `confidence_band` (HIGH/MEDIUM/LOW) are
-  // new fields the generated schema does not carry yet (needs_other_lane) — read through a narrow
-  // type rather than the raw `extractor` string ("regex") a DAF cannot make sense of.
-  const extractorKindValue = (invoice as { extractor_kind?: string }).extractor_kind ?? "";
-  const confidenceBandValue = (invoice as { confidence_band?: "HIGH" | "MEDIUM" | "LOW" }).confidence_band;
+  // How it was read (RULES/MODEL/UNKNOWN), rather than the raw `extractor` string ("regex") a DAF
+  // cannot make sense of.
+  const extractorKindValue = invoice.extractor_kind;
+  const confidenceBandValue = invoice.confidence_band;
   // Costs, not lines: lines of one type on one target and currency become one cost, which each of
   // them points to (freight + bunker surcharge on one container).
   const confirmedCostCount = new Set(lines.map((l) => l.cost_id).filter(Boolean)).size;
@@ -113,9 +111,11 @@ export default async function InvoicePage({ params }: Params) {
       </div>
 
       {inProgress ? <div className="rounded-md border border-blue-200 bg-blue-50 text-blue-800 text-sm px-4 py-3 mb-6 flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" />{t("reading")} <span className="text-blue-600/70">{t("readingHint")}</span></div> : null}
-      {/* invoice.error is a raw, uncoded backend string (extractor failure detail) — never shown verbatim to a DAF; see needs_other_lane. */}
+      {/* invoice.error is the extractor's own failure detail, in English and without a code: never shown verbatim to a DAF. */}
       {invoice.status === "FAILED" ? <div className="rounded-md border border-red-200 bg-red-50 text-red-800 text-sm px-4 py-3 mb-6"><span className="font-medium">{t("failedTitle")}</span></div> : null}
-      {invoice.status === "NEEDS_REVIEW" && invoice.confidence != null && Number(invoice.confidence) < 0.7 ? (
+      {/* The API's own band, not a threshold of ours: at 0.7 a reading the badge calls « à relire » (0.60, a
+          rule-based reading) was also called « faible » here, above lines that add up to the total. */}
+      {invoice.status === "NEEDS_REVIEW" && confidenceBandValue === "LOW" ? (
         <div className="rounded-md border border-amber-300 bg-amber-50 text-amber-900 text-sm px-4 py-3 mb-6">
           <span className="font-medium">{t("lowConfidenceTitle")}</span> {t("lowConfidenceBody")}
         </div>
@@ -151,7 +151,7 @@ export default async function InvoicePage({ params }: Params) {
         </Card>
         <Card title={t("lines")} right={<span className="text-xs text-slate-500">{lines.length}</span>} className="xl:col-span-3">
           <div id="lignes" className="scroll-mt-6">
-            <ReviewPanel invoice={invoice} targets={targets} />
+            <ReviewPanel invoice={invoice} targets={targets} pageHasNextStep={detailStep !== null} />
           </div>
         </Card>
       </div>

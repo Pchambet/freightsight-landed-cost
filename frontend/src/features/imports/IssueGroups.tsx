@@ -79,8 +79,13 @@ export function useIssueSentence(kind: ImportKind, fieldName: (field: string) =>
         return { ...out, rate_date: dateShort(p.rate_date, locale), rate: formatRate(p.rate, locale) };
       case "FX_RATE_UNAVAILABLE":
         return { ...out, date: asDay(p.date ?? "") };
+      case "FX_RATE_MISSING":
+        return { ...out, rate_date: asDay(p.rate_date ?? "") };
       case "DATES_OUT_OF_ORDER":
         return { ...out, first: fieldName(p.first), second: fieldName(p.second) };
+      case "PRODUCT_DEFAULTS_APPLIED":
+        // « hs_code,duty_rate » is the API's list: named as the mapping step names the columns.
+        return { ...out, fields: (p.fields ?? "").split(",").filter(Boolean).map(fieldName).join(", ") };
       case "CONFLICT_IN_FILE":
         return p.shipment_reference
           ? { ...out, on: "bill", values: (p.values ?? "").split(", ").map(asDay).join(", ") }

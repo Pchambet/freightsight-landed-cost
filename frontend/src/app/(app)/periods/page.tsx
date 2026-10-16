@@ -8,6 +8,7 @@ import Panel from "@/components/ui/Panel";
 import { periodTitle, signedMoney } from "@/features/periods/format";
 import { api } from "@/lib/api/client";
 import { dateShort, money } from "@/lib/format";
+import { FobMissingLine } from "@/features/report/FobMissing";
 
 export async function generateMetadata(): Promise<Metadata> {
   const t = await getTranslations("periods");
@@ -70,10 +71,10 @@ export default async function PeriodsPage() {
                       </td>
                       <td className="px-3 py-3 text-right tabular-nums text-slate-600">{p.containers}</td>
                       <td className="px-3 py-3 text-right tabular-nums text-slate-600">{money(p.fob, currency, locale)}</td>
-                      <td className="px-3 py-3 text-right tabular-nums font-medium text-slate-900">{money(p.landed, currency, locale)}</td>
+                      <td className="px-3 py-3 text-right tabular-nums font-medium text-slate-900">{money(p.landed, currency, locale)}{p.fob_missing && !closed ? <FobMissingLine href={`/periods/${p.period}`} /> : null}</td>
                       <td className="px-3 py-3 text-right tabular-nums text-slate-600">{ratio(p.coefficient)}</td>
                       <td className="px-5 py-3 text-right tabular-nums whitespace-nowrap">
-                        {!closed ? <span className="text-slate-500">—</span> : drift === 0 ? <span className="text-slate-500">{t("noDrift")}</span> : Number(p.drift_outstanding ?? p.drift ?? 0) === 0 ? (
+                        {!closed ? <span className="text-slate-500">—</span> : p.drift === null ? <span className="text-slate-500">—</span> : drift === 0 ? <span className="text-slate-500">{t("noDrift")}</span> : Number(p.drift_outstanding ?? p.drift ?? 0) === 0 ? (
                           <span className="text-slate-600">{signedMoney(p.drift!, fmt)} <span className="text-xs text-emerald-800">· {t("posted")}</span></span>
                         ) : (
                           <span className="font-medium text-amber-800">{signedMoney(p.drift!, fmt)} <span className="font-normal text-xs text-slate-500">· {t("driftContainers", { count: p.drift_containers ?? 0 })}</span></span>

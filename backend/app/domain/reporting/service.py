@@ -21,8 +21,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.money import q2, q4
-from app.domain.costing.engine import EXCLUDED_FROM_LANDED
-from app.domain.costing.service import Computation
+from app.domain.costing.engine import EXCLUDED_FROM_LANDED, Load
+from app.domain.costing.service import Computation, charged_containers
+from app.domain.costing.value import coefficient, missing_code
 from app.domain.models import (
     Container,
     ContainerMilestone,
@@ -46,31 +47,97 @@ FREIGHT_TYPES = {CostType.OCEAN_FREIGHT.value, CostType.AIR_FREIGHT.value}
 class Bucket:
     key: str
     label: str
-    fob: Decimal = ZERO
+    #: The value of every line, charged or not: what the goods cost is a fact. None while one of the
+    #: lines has no value (see `costing.value`).
+    fob: Decimal | None = ZERO
     allocated: Decimal = ZERO
     vat: Decimal = ZERO
-    landed: Decimal = ZERO
+    #: The landed cost of the lines whose container carries a charge (see `charged_containers`), and
+    #: the value and quantity those lines make up. `landed` and `charged_fob` are None while one of
+    #: those lines has no value, and when none of the bucket's containers carries a charge.
+    landed: Decimal | None = ZERO
+    charged_fob: Decimal | None = ZERO
+    charged_quantity: Decimal = Decimal(0)
+    charged_lines: int = 0
     quantity: Decimal = Decimal(0)
     load_count: int = 0
     by_cost_type: dict[str, Decimal] = field(default_factory=lambda: defaultdict(lambda: ZERO))
+    fob_missing_lines: int = 0
+    #: The part of `landed` still resting on estimates, import VAT excluded: the audit's rule.
+    estimated: Decimal = ZERO
+    #: landed / charged_fob. Left None on a row of one charge, where it would be that charge's share.
+    coefficient: Decimal | None = None
+    #: The containers with goods here and no charge at all: in `fob`, in no landed figure.
+    uncharged: set[UUID] = field(default_factory=set)
+
+    @property
+    def fob_missing(self) -> str | None:
+        return missing_code(self.fob_missing_lines)
+
+    @property
+    def containers_without_charge(self) -> int:
+        return len(self.uncharged)
 
     @property
     def freight_share(self) -> Decimal | None:
-        """Freight as a percentage of the goods. None when there are no goods to compare it to."""
-        if self.fob <= 0:
+        """Freight as a percentage of the goods it was charged on. None when there are none."""
+        if self.charged_fob is None or self.charged_fob <= 0:
             return None
         freight = sum((v for k, v in self.by_cost_type.items() if k in FREIGHT_TYPES), ZERO)
-        return (freight / self.fob * Decimal(100)).quantize(Decimal("0.01"))
+        return (freight / self.charged_fob * Decimal(100)).quantize(Decimal("0.01"))
+
+    def add(
+        self, load: Load, box: UUID, charged: bool, allocated: Decimal, vat: Decimal, estimated: Decimal
+    ) -> None:
+        """One line. An unknown value makes the bucket's FOB unknown, and its landed cost too when the
+        line is charged; a line whose container carries no charge stays out of the landed figures."""
+        self.allocated += allocated
+        self.vat += vat
+        self.estimated += estimated
+        self.quantity += load.quantity
+        self.load_count += 1
+        if load.fob is None:
+            self.fob_missing_lines += 1
+            self.fob = None
+        elif self.fob is not None:
+            self.fob += load.fob
+        if not charged:
+            self.uncharged.add(box)
+            return
+        self.charged_lines += 1
+        self.charged_quantity += load.quantity
+        if load.fob is None:
+            self.landed = self.charged_fob = None
+        elif self.landed is not None and self.charged_fob is not None:
+            self.charged_fob += load.fob
+            self.landed += load.fob + allocated
+
+    def close(self) -> None:
+        """Rounded, and with no landed figure at all when not one of its lines was charged: a sum over
+        nothing would read as a landed cost of 0."""
+        if self.load_count and not self.charged_lines:
+            self.landed = self.charged_fob = None
+        self.coefficient = coefficient(self.landed, self.charged_fob)
+        _rounded(self)
 
 
 @dataclass
 class SkuLine:
     sku: str
     quantity: Decimal
-    fob: Decimal
-    landed: Decimal
-    unit_landed_cost: Decimal
+    fob: Decimal | None
+    #: Over the lines whose container carries a charge, like the buckets' (see `Bucket`).
+    landed: Decimal | None
+    unit_landed_cost: Decimal | None
+    coefficient: Decimal | None
     load_count: int
+    estimated: Decimal
+    containers_without_charge: int
+    fob_missing_lines: int = 0
+
+    @property
+    def fob_missing(self) -> str | None:
+        return missing_code(self.fob_missing_lines)
 
 
 @dataclass
@@ -119,13 +186,18 @@ def landed_cost_report(
     period_to: date | None = None,
 ) -> LandedCostReport:
     per_load: dict[UUID, dict[str, Decimal]] = defaultdict(lambda: defaultdict(lambda: ZERO))
+    estimated: dict[UUID, dict[str, Decimal]] = defaultdict(lambda: defaultdict(lambda: ZERO))
     for allocation in comp.result.allocations:
         cost = comp.cost_rows[allocation.cost_id]
         per_load[allocation.load_id][cost.cost_type.value] += allocation.amount_base
+        if cost.status is CostStatus.ESTIMATE and cost.cost_type.value not in EXCLUDED_FROM_LANDED:
+            estimated[allocation.load_id][cost.cost_type.value] += allocation.amount_base
+    charged = charged_containers(comp)
 
     buckets: dict[str, Bucket] = {}
-    skus: dict[str, SkuLine] = {}
+    skus: dict[str, Bucket] = {}
     totals = Bucket(key="total", label="total")
+    estimated_by_type: dict[str, Decimal] = defaultdict(lambda: ZERO)
 
     for load in comp.loads:
         row = comp.load_rows[load.id]
@@ -139,43 +211,54 @@ def landed_cost_report(
         by_type = per_load.get(load.id, {})
         vat = sum((v for k, v in by_type.items() if k in EXCLUDED_FROM_LANDED), ZERO)
         allocated = sum((v for k, v in by_type.items() if k not in EXCLUDED_FROM_LANDED), ZERO)
-
         key, label = _bucket_key(group_by, row, container, landed_on)
-        for bucket in (buckets.setdefault(key, Bucket(key=key, label=label)), totals):
-            bucket.fob += load.fob
-            bucket.allocated += allocated
-            bucket.vat += vat
-            bucket.landed += load.fob + allocated
-            bucket.quantity += load.quantity
-            bucket.load_count += 1
+        sku = row.po_line.sku
+        targets = [buckets.setdefault(key, Bucket(key=key, label=label)), totals]
+        if sku:
+            targets.append(skus.setdefault(sku, Bucket(key=sku, label=sku)))
+        still_estimated = estimated.get(load.id, {})
+        for cost_type, amount in still_estimated.items():
+            estimated_by_type[cost_type] += amount
+        part = sum(still_estimated.values(), ZERO)
+        for bucket in targets:
+            bucket.add(load, container.id, container.id in charged, allocated, vat, part)
+        for bucket in targets[:2]:
             for cost_type, amount in by_type.items():
                 bucket.by_cost_type[cost_type] += amount
 
-        sku = row.po_line.sku
-        if sku:
-            line = skus.setdefault(sku, SkuLine(sku, Decimal(0), ZERO, ZERO, Decimal(0), 0))
-            line.quantity += load.quantity
-            line.fob += load.fob
-            line.landed += load.fob + allocated
-            line.load_count += 1
-
+    for bucket in (*buckets.values(), totals, *skus.values()):
+        bucket.close()
     if group_by == "cost_type":
-        buckets = _by_cost_type(totals)
-
-    for line in skus.values():
-        # Weighted by quantity, which is what a weighted average is: the same SKU landed twice at
-        # different costs is one number, not the mean of two.
-        line.unit_landed_cost = q4(line.landed / line.quantity) if line.quantity else Decimal(0)
-        line.fob, line.landed = q2(line.fob), q2(line.landed)
+        buckets = _by_cost_type(totals, estimated_by_type)
 
     return LandedCostReport(
         base_currency=org.base_currency,
         group_by=group_by,
         period_from=period_from,
         period_to=period_to,
-        buckets=sorted((_rounded(b) for b in buckets.values()), key=lambda b: b.label),
-        skus=sorted(skus.values(), key=lambda s: s.sku),
-        totals=_rounded(totals),
+        buckets=sorted(buckets.values(), key=lambda b: b.label),
+        skus=[_sku_line(skus[sku]) for sku in sorted(skus)],
+        totals=totals,
+    )
+
+
+def _sku_line(bucket: Bucket) -> SkuLine:
+    # Weighted by quantity, which is what a weighted average is: the same SKU landed twice at
+    # different costs is one number, not the mean of two.
+    unit: Decimal | None = None
+    if bucket.landed is not None:
+        unit = q4(bucket.landed / bucket.charged_quantity) if bucket.charged_quantity else Decimal(0)
+    return SkuLine(
+        sku=bucket.key,
+        quantity=bucket.quantity,
+        fob=bucket.fob,
+        landed=bucket.landed,
+        unit_landed_cost=unit,
+        coefficient=bucket.coefficient,
+        load_count=bucket.load_count,
+        estimated=bucket.estimated,
+        containers_without_charge=bucket.containers_without_charge,
+        fob_missing_lines=bucket.fob_missing_lines,
     )
 
 
@@ -196,26 +279,37 @@ def _bucket_key(group_by: str, row: object, container: Container, landed_on: dat
     raise ValueError(f"unknown group_by {group_by!r}")
 
 
-def _by_cost_type(totals: Bucket) -> dict[str, Bucket]:
+def _by_cost_type(totals: Bucket, estimated: dict[str, Decimal]) -> dict[str, Bucket]:
     """One bucket per charge, carrying the FOB it was charged on so shares stay computable."""
     out: dict[str, Bucket] = {}
     for cost_type, amount in totals.by_cost_type.items():
-        bucket = Bucket(key=cost_type, label=cost_type, fob=totals.fob, load_count=totals.load_count)
+        bucket = Bucket(
+            key=cost_type,
+            label=cost_type,
+            fob=totals.fob,
+            charged_fob=totals.charged_fob,
+            load_count=totals.load_count,
+            fob_missing_lines=totals.fob_missing_lines,
+            uncharged=totals.uncharged,
+        )
         bucket.allocated = amount if cost_type not in EXCLUDED_FROM_LANDED else ZERO
         bucket.vat = amount if cost_type in EXCLUDED_FROM_LANDED else ZERO
         # The import-VAT row used to carry its amount as a landed cost of its own, in the one table
         # whose whole point is which charge weighs what. A recoverable tax weighs nothing there.
         bucket.landed = bucket.allocated
+        bucket.estimated = q2(estimated.get(cost_type, ZERO))
         bucket.by_cost_type[cost_type] = amount
         out[cost_type] = bucket
     return out
 
 
 def _rounded(bucket: Bucket) -> Bucket:
-    bucket.fob = q2(bucket.fob)
+    bucket.fob = None if bucket.fob is None else q2(bucket.fob)
+    bucket.charged_fob = None if bucket.charged_fob is None else q2(bucket.charged_fob)
     bucket.allocated = q2(bucket.allocated)
     bucket.vat = q2(bucket.vat)
-    bucket.landed = q2(bucket.landed)
+    bucket.estimated = q2(bucket.estimated)
+    bucket.landed = None if bucket.landed is None else q2(bucket.landed)
     bucket.by_cost_type = {k: q2(v) for k, v in sorted(bucket.by_cost_type.items())}
     return bucket
 
@@ -228,18 +322,26 @@ def record_sku_costs(db: Session, comp: Computation, org: Organization, on_date:
 
     Called after each recompute. One row per SKU per day: recomputing twice on the same day corrects
     the day rather than adding a second point, so the curve is a history of facts about the goods,
-    not of button presses.
+    not of button presses. An article one of whose lines has no value gets no point that day: its
+    unit cost is not known, and a point over its other lines would be a different article's curve.
+    A line whose container carries no charge is left out, as from every landed figure; an article
+    with nothing else gets no point.
     """
     per_load: dict[UUID, Decimal] = defaultdict(lambda: ZERO)
     for allocation in comp.result.allocations:
         cost = comp.cost_rows[allocation.cost_id]
         if cost.cost_type.value not in EXCLUDED_FROM_LANDED:
             per_load[allocation.load_id] += allocation.amount_base
+    charged = charged_containers(comp)
 
     totals: dict[str, list[Decimal]] = defaultdict(lambda: [Decimal(0), ZERO, ZERO, Decimal(0)])
+    unknown: set[str] = set()
     for load in comp.loads:
         sku = comp.load_rows[load.id].po_line.sku
-        if not sku:
+        if not sku or load.container_id not in charged:
+            continue
+        if load.fob is None:
+            unknown.add(sku)
             continue
         entry = totals[sku]
         entry[0] += load.quantity
@@ -255,6 +357,10 @@ def record_sku_costs(db: Session, comp: Computation, org: Organization, on_date:
             )
         )
     }
+    for sku in unknown:
+        totals.pop(sku, None)
+    for sku in [sku for sku in existing if sku not in totals]:
+        db.delete(existing.pop(sku))  # the day is corrected, not left at what it was before
     for sku, (quantity, fob, landed, count) in totals.items():
         unit = q4(landed / quantity) if quantity else Decimal(0)
         row = existing.get(sku)

@@ -7,15 +7,18 @@ last computed — which is why each of them needs something that actively goes a
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import Engine, text
 from sqlalchemy.orm import Session
 
 from app.adapters.s3 import S3Object
 from app.jobs import handlers
+from app.ops.backup import BackupResult, note_success, record_success
 
 NOW = datetime(2026, 9, 17, 12, 0, tzinfo=UTC)
 
@@ -162,3 +165,70 @@ def test_a_backup_that_suddenly_holds_a_third_less_is_an_error() -> None:
 
 def test_an_empty_bucket_is_an_error() -> None:
     assert handlers.check_backup_freshness(now=NOW, env=ENV, client=FakeBucket([])) == "missing"
+
+
+# ---------------------------------------------------------------------------- without the bucket
+
+
+def took(db: Session, at: datetime, size: int) -> None:
+    """What `python -m app.backup` leaves in the database after an upload."""
+    note_success(db, BackupResult(f"backups/prod/{at:%Y-%m-%dT%H%M}.dump.enc", size, "", 1.0, [], at))
+
+
+def test_without_storage_credentials_the_worker_reads_what_the_backup_wrote(db: Session) -> None:
+    """Production's worker holds no SCW_* variable: the check used to answer `skipped` there, every
+    night, so a backup that stopped was noticed by nobody. It reads the backup's own record instead."""
+    took(db, NOW - timedelta(hours=9), 900_000)
+    assert handlers.check_backup_freshness(db, now=NOW, env={"APP_ENV": "prod"}) == "ok"
+
+
+def test_a_recorded_backup_that_stopped_is_stale(db: Session, caplog: pytest.LogCaptureFixture) -> None:
+    took(db, NOW - timedelta(days=4), 900_000)
+    with caplog.at_level("ERROR"):
+        assert handlers.check_backup_freshness(db, now=NOW, env={"APP_ENV": "prod"}) == "stale"
+    assert "older than the window" in caplog.text
+
+
+def test_a_recorded_backup_a_third_smaller_than_the_last_is_an_error(db: Session) -> None:
+    took(db, NOW - timedelta(days=1, hours=9), 900_000)
+    took(db, NOW - timedelta(hours=9), 400_000)
+    assert handlers.check_backup_freshness(db, now=NOW, env={"APP_ENV": "prod"}) == "shrunk"
+
+
+def test_no_backup_ever_recorded_is_an_error_in_production_only(db: Session) -> None:
+    assert handlers.check_backup_freshness(db, now=NOW, env={"APP_ENV": "prod"}) == "missing"
+    assert handlers.check_backup_freshness(db, now=NOW, env={"APP_ENV": "dev"}) == "skipped"
+
+
+def test_the_verdict_is_what_the_service_status_reads(db: Session) -> None:
+    """Settings → service status and `python -m app.doctor` read `ops.backup_freshness`, which no job
+    wrote: backups always showed as unverified, whatever the bucket held."""
+    from app.domain.readiness import job_runs
+
+    took(db, NOW - timedelta(hours=9), 900_000)
+    handlers.record_backup_freshness(db, now=NOW, env={"APP_ENV": "prod"})
+    run = job_runs(db.connection())[handlers.BACKUP_FRESHNESS_JOB]
+    assert (run.last_run_at, run.failures) == (NOW, 0)
+
+    handlers.record_backup_freshness(db, now=NOW + timedelta(days=5), env={"APP_ENV": "prod"})
+    assert job_runs(db.connection())[handlers.BACKUP_FRESHNESS_JOB].failures == 1
+
+
+def test_the_backup_records_itself_in_the_database_it_dumped(engine: Engine, database_url: str) -> None:
+    """What `python -m app.backup` does after the upload, on its own connection, as the owner."""
+    try:
+        record_success(database_url, BackupResult("backups/prod/a.dump.enc", 900_000, "", 1.0, [], NOW))
+        record_success(database_url, BackupResult("backups/prod/b.dump.enc", 950_000, "", 1.0, [], NOW))
+        with engine.connect() as connection:
+            row = connection.execute(
+                text("SELECT last_run_at, detail FROM job_runs WHERE name = 'ops.backup'")
+            ).one()
+        assert row.last_run_at == NOW
+        assert json.loads(row.detail) == {
+            "key": "backups/prod/b.dump.enc",
+            "size_bytes": 950_000,
+            "previous_bytes": 900_000,
+        }
+    finally:
+        with engine.begin() as connection:
+            connection.execute(text("DELETE FROM job_runs WHERE name = 'ops.backup'"))

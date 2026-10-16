@@ -4,7 +4,7 @@ import { btnPrimary, btnSecondary } from "@/components/layout/AppShell";
 
 export type NextStepLink = { href: string; label: string };
 
-/** One obvious next action at the top of a workflow screen. */
+/** One obvious next action at the top of a workflow screen, or none when the screen itself is the step. */
 export default function NextStepCard({
   title,
   description,
@@ -14,7 +14,7 @@ export default function NextStepCard({
 }: {
   title: string;
   description: string;
-  primary: NextStepLink;
+  primary?: NextStepLink | null;
   secondary?: NextStepLink[];
   variant?: "default" | "success" | "warning";
 }) {
@@ -28,17 +28,21 @@ export default function NextStepCard({
     <div className={`rounded-lg border px-4 py-4 mb-6 ${styles}`}>
       <p className="text-xs font-semibold uppercase tracking-wider text-slate-600">{title}</p>
       <p className="text-sm text-slate-800 mt-1">{description}</p>
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        <Link href={primary.href} className={`${btnPrimary} inline-flex items-center`}>
-          {primary.label}
-          <ArrowRight className="w-4 h-4 ml-2" />
-        </Link>
-        {secondary.map((link) => (
-          <Link key={link.href} href={link.href} className={btnSecondary}>
-            {link.label}
-          </Link>
-        ))}
-      </div>
+      {primary || secondary.length > 0 ? (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {primary ? (
+            <Link href={primary.href} className={`${btnPrimary} inline-flex items-center`}>
+              {primary.label}
+              <ArrowRight className="w-4 h-4 ml-2" />
+            </Link>
+          ) : null}
+          {secondary.map((link) => (
+            <Link key={link.href} href={link.href} className={btnSecondary}>
+              {link.label}
+            </Link>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }

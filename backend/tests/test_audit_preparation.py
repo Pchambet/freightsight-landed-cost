@@ -439,3 +439,27 @@ def test_examples_stop_at_five_and_the_count_says_how_many(client: TestClient) -
         box(client, number, shipment=None, dated=False)
     undated = item(client, "CONTAINERS_WITHOUT_DATE")
     assert (undated["count"], len(undated["examples"])) == (6, 5)
+
+
+def test_an_order_with_no_exchange_rate_blocks_the_audit(client: TestClient) -> None:
+    """Its goods have no value in the base currency: every margin and every split by value on its box
+    would be wrong, so the audit names the order before it states anything."""
+    _, box_id = complete_quarter(client)
+    number = client.get(f"/api/v1/containers/{box_id}").json()["container_number"]
+    header = "po_number;currency;order_date;sku;quantity;unit_price;container_number"
+    content = f"{header}\nPO-XTS;XTS;2026-02-10;TYRE;10;100,00;{number}\n"
+    res = client.post(
+        "/api/v1/imports",
+        data={"kind": "PURCHASE_ORDERS"},
+        files={"file": ("f.csv", content.encode(), "text/csv")},
+    )
+    assert (
+        client.post(f"/api/v1/imports/{res.json()['id']}/commit", json={"on_error": "abort"}).status_code
+        == 200
+    )
+
+    found = item(client, "ORDERS_WITHOUT_FX_RATE")
+    assert (found["severity"], found["count"]) == ("blocking", 1)
+    assert [(e["kind"], e["label"]) for e in found["examples"]] == [("purchase_order", "PO-XTS")]
+    reasons = [i["params"]["reason"] for i in preparation(client) if i["code"] == "COSTS_UNALLOCATED"]
+    assert "MISSING_FX_RATE" in reasons

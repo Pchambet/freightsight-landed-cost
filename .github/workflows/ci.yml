@@ -4,9 +4,15 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Weekly, with no push: an advisory published on Tuesday for a locked dependency surfaces by Monday
+  # instead of turning the next unrelated push red.
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
 
 concurrency:
-  group: ci-${{ github.ref }}
+  # The event is in the key so that a push to main does not cancel the weekly run, or the reverse.
+  group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -17,20 +23,24 @@ jobs:
   changes:
     runs-on: ubuntu-latest
     outputs:
-      backend: ${{ steps.filter.outputs.backend }}
-      frontend: ${{ steps.filter.outputs.frontend }}
+      # A scheduled or manual run has no diff to filter on: it checks everything.
+      backend: ${{ steps.filter.outputs.backend || 'true' }}
+      frontend: ${{ steps.filter.outputs.frontend || 'true' }}
     steps:
       - uses: actions/checkout@v7
       - uses: dorny/paths-filter@v4
+        if: github.event_name == 'push' || github.event_name == 'pull_request'
         id: filter
         with:
           filters: |
             backend:
               - 'backend/**'
+              # test_worked_example.py holds this README's worked example to the engine's output.
               - 'README.md'
               - '.github/workflows/ci.yml'
             frontend:
               - 'frontend/**'
+              - 'backend/openapi.json'
               - '.github/workflows/ci.yml'
 
   backend:
@@ -57,6 +67,11 @@ jobs:
       APP_ENV: test
       DATABASE_URL: postgresql+psycopg://fs:fs@localhost:5432/fs_test
       TEST_DATABASE_URL: postgresql+psycopg://fs:fs@localhost:5432/fs_test
+      # The runner image ships PostgreSQL 16, and Debian's `pg_dump` wrapper can pick that cluster's
+      # client over the 18 installed below: the backup round-trip test skipped for weeks. Named by
+      # path; the test now fails in CI (CI=true) instead of skipping.
+      PG_DUMP_BIN: /usr/lib/postgresql/18/bin/pg_dump
+      PG_RESTORE_BIN: /usr/lib/postgresql/18/bin/pg_restore
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
@@ -71,14 +86,14 @@ jobs:
           echo "deb [signed-by=/usr/share/keyrings/pgdg.gpg] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
           sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client-18
       - run: uv sync --frozen --all-groups
-      # Known vulnerabilities in the locked Python dependencies (npm audit covers the front-end side).
-      - run: uv export --frozen --no-hashes --no-emit-project -o /tmp/requirements.txt && uvx pip-audit -r /tmp/requirements.txt --disable-pip --no-deps
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run mypy .
+      # The committed contract is what the front end's types are generated from.
+      - run: uv run python scripts/export_openapi.py --check
       - run: uv run alembic upgrade head
       - run: uv run alembic check
-      - run: uv run pytest --cov=app --cov-report=term-missing
+      - run: uv run pytest -rs --cov=app --cov-report=term-missing
 
   frontend:
     needs: changes
@@ -96,6 +111,8 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
       - run: npm run lint
+      # The generated types must be those of the committed contract (backend/openapi.json).
+      - run: npm run api:types && git diff --exit-code -- src/lib/api/schema.d.ts
       - run: npx tsc --noEmit
       - run: npm run build
         env:
@@ -139,6 +156,22 @@ jobs:
           name: playwright-report
           path: frontend/playwright-report/
           retention-days: 7
+
+  # Known vulnerabilities in the locked dependencies, apart from the build and test jobs: a new
+  # advisory turns this job red, not the verdict on the code that was pushed.
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+      - run: uv export --frozen --no-hashes --no-emit-project -o /tmp/requirements.txt && uvx pip-audit -r /tmp/requirements.txt --disable-pip --no-deps
+        working-directory: backend
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      # Production dependencies only: what ships to the browser and the server.
+      - run: npm audit --omit=dev
+        working-directory: frontend
 
   secrets:
     runs-on: ubuntu-latest

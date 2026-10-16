@@ -222,6 +222,49 @@ def update_line(
     return _response(invoice)
 
 
+@router.patch("/{invoice_id}/lines", response_model=schemas.InvoiceResponse)
+def update_lines(
+    invoice_id: UUID,
+    payload: schemas.InvoiceLinesUpdate,
+    t: TenantDep,
+    _: WriterDep,
+) -> schemas.InvoiceResponse:
+    """Decide several lines of one invoice in one go — « keep all », « attach all to this container ».
+
+    One lock, one transaction, all or nothing. One call per line cannot do this: each takes the
+    invoice's lock without waiting, so lines sent side by side refuse each other (INVOICE_BUSY) and
+    the screen is left with one line kept out of five. A line that is not on this invoice, or named
+    twice, refuses the whole batch, each one with its own code.
+    """
+    invoice = _get(t, invoice_id, lock=True)
+    if invoice.status is InvoiceStatus.CONFIRMED:
+        raise NotFound("Invoice line")  # a confirmed invoice is history, not a draft
+    by_id = {ln.id: ln for ln in invoice.lines}
+    refused: list[dict[str, str]] = []
+    seen: set[UUID] = set()
+    for decision in payload.lines:
+        if decision.id not in by_id:
+            refused.append({"field": str(decision.id), "code": "INVOICE_LINE_NOT_FOUND"})
+        elif decision.id in seen:
+            refused.append({"field": str(decision.id), "code": "INVOICE_LINE_REPEATED"})
+        seen.add(decision.id)
+    for error in refused:
+        error["message"] = error["code"]  # the sentence is the screen's, in its language
+    if refused:
+        raise Unprocessable(
+            "No line was changed: some lines of the batch cannot be applied to this invoice",
+            code="INVOICE_LINES_REFUSED",
+            errors=refused,
+        )
+    for decision in payload.lines:
+        line = by_id[decision.id]
+        for field, value in decision.model_dump(exclude_unset=True, exclude={"id"}).items():
+            setattr(line, field, value)
+    t.db.commit()
+    t.db.refresh(invoice)
+    return _response(invoice)
+
+
 @router.post(
     "/{invoice_id}/lines",
     response_model=schemas.InvoiceResponse,

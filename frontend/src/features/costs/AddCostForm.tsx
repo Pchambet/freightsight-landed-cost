@@ -8,7 +8,7 @@ import { toast } from "sonner";
 import { btnPrimary, input, label } from "@/components/layout/AppShell";
 import { addCost } from "@/features/actions";
 import { COST_TYPES, USER_METHODS, type CostScope } from "@/lib/domain";
-import { amountPlaceholder } from "@/lib/format";
+import { amountPlaceholder, parisToday } from "@/lib/format";
 
 export default function AddCostForm({ scope, targetId, shipmentId, currency, revalidate }: { scope: CostScope; targetId: string; shipmentId?: string | null; currency: string; revalidate: string }) {
   const t = useTranslations("costs.form");
@@ -20,7 +20,7 @@ export default function AddCostForm({ scope, targetId, shipmentId, currency, rev
   const [costType, setCostType] = useState("OCEAN_FREIGHT");
   const formRef = useRef<HTMLFormElement>(null);
   const router = useRouter();
-  const today = new Date().toISOString().slice(0, 10);
+  const today = parisToday();
 
   const submit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();

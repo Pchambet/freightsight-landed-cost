@@ -1,4 +1,5 @@
 import { expect, test, type BrowserContext, type Page } from "@playwright/test";
+import { site } from "../src/lib/site";
 
 /** Offline by construction: anything that is not the local server fails fast instead of hanging. */
 async function goOffline(page: Page) {
@@ -47,6 +48,38 @@ for (const { path, name } of PUBLIC_PAGES) {
     await expect(page.locator('meta[name="twitter:card"]')).toHaveAttribute("content", "summary_large_image");
   });
 }
+
+test("the privacy policy renders without a session, names who answers and links the CNIL", async ({ page }) => {
+  const response = await page.goto("/confidentialite");
+  expect(response?.status()).toBe(200);
+  await expect(page.locator("h1").first()).toBeVisible();
+  await expect(page).toHaveTitle(/Politique de confidentialité · FreightSight/);
+  await expect(page.locator(`main a[href="mailto:${site.contactEmail}"]`).first()).toBeVisible();
+  await expect(page.locator('main a[href="https://www.cnil.fr/fr/plaintes"]')).toHaveCount(1);
+  // The sub-processors come from the same list as /securite, transfers included.
+  await expect(page.getByRole("cell", { name: "Clerk", exact: true })).toBeVisible();
+  await expect(page.getByText("Anthropic", { exact: false }).first()).toBeVisible();
+});
+
+test("the sign-up page says how the data is processed and links the privacy policy", async ({ page }) => {
+  // GDPR art. 13: the information is given where the data is collected. Rendered on the server, so it
+  // shows even though Clerk's form cannot load offline.
+  await page.goto("/sign-up");
+  await expect(page.locator('a[href="/confidentialite"]')).toBeVisible();
+});
+
+test("the legal notice and the terms exist only once their identity fields are filled, and the footer links only what exists", async ({ page }) => {
+  const legal = page.getByRole("navigation", { name: "Informations légales" });
+  await page.goto("/?preview=1");
+  await expect(legal.getByRole("link", { name: "Confidentialité" })).toHaveAttribute("href", "/confidentialite");
+  await expect(legal.getByRole("link", { name: "Mentions légales" })).toHaveCount(site.legalNoticePublished ? 1 : 0);
+  await expect(legal.getByRole("link", { name: "CGV" })).toHaveCount(site.termsPublished ? 1 : 0);
+
+  for (const [path, published] of [["/mentions-legales", site.legalNoticePublished], ["/cgv", site.termsPublished]] as const) {
+    const response = await page.goto(path);
+    expect(response?.status(), path).toBe(published ? 200 : 404);
+  }
+});
 
 test("the demurrage calculator computes and reads its state from the URL", async ({ page }) => {
   await page.goto("/?preview=1");
@@ -101,6 +134,9 @@ test("sitemap.xml lists the public pages (it used to 307 to /sign-in)", async ({
   expect(body).toContain("<loc>");
   expect(body).toContain("/securite</loc>");
   expect(body).toContain("/design-partner</loc>");
+  expect(body).toContain("/confidentialite</loc>");
+  expect(body.includes("/mentions-legales</loc>")).toBe(site.legalNoticePublished);
+  expect(body.includes("/cgv</loc>")).toBe(site.termsPublished);
 });
 
 test("an unknown URL renders a real 404, not a sign-in redirect", async ({ page }) => {
@@ -135,7 +171,7 @@ test("the public pages answer without the Clerk middleware, so a cookie-less cli
     const url = new URL(og!);
     images.push(url.pathname + url.search);
   }
-  for (const path of [...pages, ...images, "/robots.txt", "/sitemap.xml", `/r/${"x".repeat(43)}`]) {
+  for (const path of [...pages, ...images, "/confidentialite", "/mentions-legales", "/cgv", "/robots.txt", "/sitemap.xml", `/r/${"x".repeat(43)}`]) {
     const response = await request.get(path, asCrawler);
     expect(response.headers()["x-clerk-auth-status"], path).toBeUndefined();
     expect(response.status(), path).not.toBe(307);

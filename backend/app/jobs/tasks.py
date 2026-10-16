@@ -113,6 +113,17 @@ def heartbeat(timestamp: int) -> None:
         handlers.heartbeat(db, now=_moment(timestamp))
 
 
+@app.periodic(cron="*/10 * * * *")
+@app.task(name="ops.recover_stalled_jobs", queueing_lock="ops:recover_stalled_jobs")
+def recover_stalled_jobs(timestamp: int) -> None:
+    """Re-queue, or give up on, the jobs a dead worker left `doing` — they hold their lock for ever."""
+    scheduled = {periodic.task.name for periodic in app.periodic_registry.periodic_tasks.values()}
+    with handlers.session() as db:
+        requeued, given_up = handlers.recover_stalled_jobs(db, scheduled=scheduled)
+    if requeued or given_up:
+        logger.warning("stalled jobs: %s re-queued, %s given up", requeued, given_up)
+
+
 @app.periodic(cron="45 4 * * *")
 @app.task(
     name="ops.check_backup_freshness",
@@ -120,9 +131,10 @@ def heartbeat(timestamp: int) -> None:
     retry=RetryStrategy(max_attempts=2, exponential_wait=300),
 )
 def check_backup_freshness(timestamp: int) -> None:
-    """Look in the bucket. The nightly backup shouts when it fails; nothing shouted when it stopped
-    running at all."""
-    outcome = handlers.check_backup_freshness(now=_moment(timestamp))
+    """Look at what the backups left. The nightly backup shouts when it fails; nothing shouted when it
+    stopped running at all."""
+    with handlers.session() as db:
+        outcome = handlers.record_backup_freshness(db, now=_moment(timestamp))
     logger.info("backup freshness: %s", outcome)
 
 

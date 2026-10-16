@@ -74,6 +74,7 @@ Code = Literal[
     "INVOICES_TO_REVIEW",
     "COST_ROWS_REFUSED",
     "COSTS_UNALLOCATED",
+    "ORDERS_WITHOUT_FX_RATE",
     "SAME_INVOICE_TWICE",
     "CREDIT_NOTE_REVERSES_COST",
     "CREDIT_NOTES_SKIPPED",
@@ -103,6 +104,7 @@ CHECKS: dict[Code, tuple[Severity, Section]] = {
     "INVOICES_TO_REVIEW": ("blocking", "findings"),
     "COST_ROWS_REFUSED": ("blocking", "margins"),
     "COSTS_UNALLOCATED": ("blocking", "margins"),
+    "ORDERS_WITHOUT_FX_RATE": ("blocking", "margins"),
     "SAME_INVOICE_TWICE": ("blocking", "margins"),
     "CREDIT_NOTE_REVERSES_COST": ("blocking", "margins"),
     "CREDIT_NOTES_SKIPPED": ("limits", "findings"),
@@ -183,6 +185,7 @@ def audit_preparation(
         *period.invoices("INVOICES_TO_REVIEW", (InvoiceStatus.NEEDS_REVIEW,)),
         *period.refused_rows(),
         *period.unallocated(),
+        *period.without_fx_rate(),
         *period.double_entries(),
         *period.credit_notes(),
         *period.po_split(),
@@ -531,6 +534,21 @@ class _Period:
             )
         return items
 
+    def without_fx_rate(self) -> list[Item]:
+        """Orders on the period's boxes with no exchange rate: their goods have no value in the base
+        currency, so every margin and every split by value they touch would be wrong."""
+        orders = {
+            load.po_id: self.comp.pos[load.po_id]
+            for load in self.comp.loads
+            if load.container_id in self.boxes and not load.value_known
+        }
+        examples = sorted(orders.values(), key=lambda po: po.po_number)
+        return _item(
+            "ORDERS_WITHOUT_FX_RATE",
+            len(orders),
+            (Example("purchase_order", str(po.id), po.po_number) for po in examples),
+        )
+
     def double_entries(self) -> list[Item]:
         """One invoice recorded twice: the landed cost counts it twice until one copy goes."""
         pairs = _double_entries(self.comp, self.every, self.costs_in, documents_of(self.db, self.costs_in))
@@ -734,11 +752,12 @@ class _Period:
 
     def no_sale_price(self) -> list[Item]:
         """Articles of the period without a selling price in the books' currency: no margin for them.
-        The same count as the audit's `unpriced_skus`."""
+        The same count as the audit's `unpriced_skus`, which lists no article none of whose
+        containers carries a charge."""
         articles = sku_report(
             self.db, self.comp, self.org, period_from=self.period_from, period_to=self.period_to
         )
-        unpriced = [a for a in articles if a.sale_price is None or a.margin_unit is None or a.sale_price <= 0]
+        unpriced = [a for a in articles if a.charged and not a.priced]
         return _item("NO_SALE_PRICE", len(unpriced), (Example("sku", a.sku, a.sku) for a in unpriced))
 
     def no_assumed_coefficient(self) -> list[Item]:

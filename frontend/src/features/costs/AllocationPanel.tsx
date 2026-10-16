@@ -9,6 +9,8 @@ import { previewAllocation } from "@/features/actions";
 import type { LandedCostReport } from "@/lib/api/client";
 import { USER_METHODS, type CostType } from "@/lib/domain";
 import { qty, unitCost } from "@/lib/format";
+import { FobMissingLine } from "@/features/report/FobMissing";
+import { WithoutChargeLine } from "@/features/report/WithoutCharge";
 
 /**
  * Breakdown per PO line with a live "what if" switch: change the method per cost type and the
@@ -56,6 +58,9 @@ export default function AllocationPanel({ containerId, poId, report }: { contain
   // into "Landed". It gets its own visually distinct column instead.
   const chargeCostTypes = Object.keys(shown.by_cost_type).filter((ct) => ct !== "IMPORT_VAT");
   const hasVat = Object.prototype.hasOwnProperty.call(shown.by_cost_type, "IMPORT_VAT");
+  // A line whose container carries no charge would show its FOB as a landed cost: a dash instead, and
+  // why, by the API's rule (`without_charge`). With every line so, the total says the same.
+  const bare = shown.lines.length > 0 && shown.lines.every((ln) => ln.without_charge);
 
   return (
     <Card
@@ -106,12 +111,14 @@ export default function AllocationPanel({ containerId, poId, report }: { contain
                   <td className={td}>
                     <div className="font-medium">{ln.po_number} <span className="text-slate-500 font-normal">#{ln.line_no}</span></div>
                     <div className="text-xs text-slate-500">{[ln.sku, ln.description].filter(Boolean).join(" · ") || "—"}</div>
+                    {ln.fob_missing ? <FobMissingLine href={`/purchase-orders/${ln.po_id}#taux`} /> : null}
+                    {ln.without_charge ? <WithoutChargeLine /> : null}
                   </td>
                   {poId ? <td className={`${td} font-mono text-xs text-slate-600`}>{ln.container_number}</td> : null}
                   <td className={tdRight}>{qty(ln.quantity, locale)}</td>
                   <td className={`${tdRight} text-slate-600`}><Money amount={ln.fob} currency={cur} /></td>
-                  <td className={`${tdRight} font-semibold`}><Money amount={ln.landed} currency={cur} /></td>
-                  <td className={`${tdRight} font-semibold text-emerald-700`}>{unitCost(ln.unit_landed_cost, cur, locale)}</td>
+                  <td className={`${tdRight} font-semibold`}>{ln.without_charge ? <span className="text-slate-400">—</span> : <Money amount={ln.landed} currency={cur} />}</td>
+                  <td className={`${tdRight} font-semibold text-emerald-700`}>{ln.without_charge || ln.unit_landed_cost === null ? <span className="text-slate-400">—</span> : unitCost(ln.unit_landed_cost, cur, locale)}</td>
                   {chargeCostTypes.map((ct) => (
                     <td key={ct} className={`${tdRight} text-blue-700`}>{ln.by_cost_type[ct] ? <Money amount={ln.by_cost_type[ct]} currency={cur} /> : <span className="text-slate-300">—</span>}</td>
                   ))}
@@ -125,7 +132,7 @@ export default function AllocationPanel({ containerId, poId, report }: { contain
               <tr>
                 <td className={td} colSpan={poId ? 3 : 2}>{tr("total")}</td>
                 <td className={tdRight}><Money amount={shown.totals.fob} currency={cur} /></td>
-                <td className={tdRight}><Money amount={shown.totals.landed} currency={cur} /></td>
+                <td className={tdRight}>{bare ? <span className="text-slate-400">—</span> : <Money amount={shown.totals.landed} currency={cur} />}</td>
                 <td className={tdRight}></td>
                 {chargeCostTypes.map((ct) => <td key={ct} className={tdRight}><Money amount={shown.by_cost_type[ct]} currency={cur} /></td>)}
                 {hasVat ? <td className={`${tdRight} text-slate-500`}><Money amount={shown.by_cost_type.IMPORT_VAT} currency={cur} /></td> : null}

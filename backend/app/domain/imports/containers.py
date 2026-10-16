@@ -35,6 +35,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
 from app.core.tenancy import TenantSession
+from app.domain.alerts.service import restate_dnd_risk
 from app.domain.boxes import is_container_number, iso_size_type, scac_of
 from app.domain.imports.parsing import ColumnDates, ImportError_, Table, infer_date_orders, parse_date
 from app.domain.imports.service import ImportReport, RowIssue, _Row
@@ -375,6 +376,9 @@ def _write_box(t: TenantSession, box: _Box, counters: dict[str, int], report: Im
                 changed = True
                 if _MILESTONES.index(MILESTONE_OF[name]) > _MILESTONES.index(container.milestone):
                     container.milestone = MILESTONE_OF[name]
+        # The sheet is often how a box first reaches us: one still at the terminal counts its free
+        # days from now, not from the next morning's pass. A preview rolls this back with the rest.
+        restate_dnd_risk(t.db, t.org, container, datetime.now(UTC))
     t.db.flush()
     if changed and not created:
         counters["containers_updated"] += 1

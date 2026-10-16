@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
-import { CheckCircle2, Download, Hourglass, LockKeyhole } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Download, Hourglass, LockKeyhole } from "lucide-react";
 import { PageHeader, btnSecondary } from "@/components/layout/AppShell";
 import BreakdownBar from "@/components/charts/BreakdownBar";
 import { COST_FAMILIES, foldFamilies, type CostFamily } from "@/components/charts/families";
@@ -12,6 +12,7 @@ import Panel from "@/components/ui/Panel";
 import StatTile from "@/components/ui/StatTile";
 import AcknowledgeDrift from "@/features/periods/AcknowledgeDrift";
 import PeriodActions from "@/features/periods/PeriodActions";
+import FobMissing, { FobMissingLine } from "@/features/report/FobMissing";
 import { isPeriodKey, periodTitle, signedMoney } from "@/features/periods/format";
 import { api } from "@/lib/api/client";
 import { dateShort, dateTimeShort, money } from "@/lib/format";
@@ -26,10 +27,11 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
 export default async function PeriodPage({ params }: Params) {
   const { period } = await params;
   if (!isPeriodKey(period)) notFound();
-  const [t, tf, tt, locale, res, me] = await Promise.all([
+  const [t, tf, tt, tm, locale, res, me] = await Promise.all([
     getTranslations("periods"),
     getTranslations("costFamily"),
     getTranslations("domain.costType"),
+    getTranslations("fobMissing"),
     getLocale(),
     api.GET("/api/v1/periods/{period}", { params: { path: { period } } }),
     api.GET("/api/v1/me"),
@@ -51,6 +53,10 @@ export default async function PeriodPage({ params }: Params) {
   const fmt = (v: number) => money(v, currency, locale);
   const ratio = s.coefficient === null || s.coefficient === undefined ? "—" : new Intl.NumberFormat(locale === "fr" ? "fr-FR" : "en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(s.coefficient));
   const familyLabels = Object.fromEntries(COST_FAMILIES.map((f) => [f, tf(f)])) as Record<CostFamily, string>;
+  // Today's figures of a month holding an order with no exchange rate are unknown, the drift with them.
+  const unrated = readiness?.orders_without_fx_rate ?? [];
+  const rateHref = unrated.length > 0 ? `/purchase-orders/${unrated[0].id}#taux` : "/purchase-orders";
+  const driftUnknown = closed && s.drift === null;
   const drift = Number(s.drift ?? 0);
   const outstanding = Number(s.drift_outstanding ?? s.drift ?? 0);
   const acknowledged = Number(s.drift_acknowledged ?? 0);
@@ -68,6 +74,8 @@ export default async function PeriodPage({ params }: Params) {
         actions={<PeriodActions period={period} title={periodTitle(period, locale, true)} status={closed ? "closed" : "open"} canClose={canDecide} canReopen={canDecide} estimated={estimatedTotal > 0 ? money(estimatedTotal, currency, locale) : null} />}
       />
 
+      <FobMissing lines={s.fob_missing_lines} href={rateHref} className="mb-6" />
+
       <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 mb-6">
         <StatTile label={closed ? t("detail.frozenLanded") : t("detail.liveLanded")} hint={closed ? t("detail.frozenHint") : undefined} value={money(s.landed, currency, locale)} sub={t("detail.onFob", { fob: money(s.fob, currency, locale) })} />
         <StatTile label={t("detail.coef")} value={ratio} sub={t("detail.containers", { count: s.containers })} />
@@ -75,9 +83,9 @@ export default async function PeriodPage({ params }: Params) {
           <StatTile
             label={t("detail.drift")}
             hint={t("detail.driftHint")}
-            value={signedMoney(s.drift ?? "0", fmt)}
-            tone={outstanding !== 0 ? "warning" : "default"}
-            sub={drift === 0 ? t("detail.driftNone") : outstanding === 0 ? t("detail.driftPosted") : acknowledged !== 0 ? t("detail.driftPartly", { outstanding: signedMoney(outstanding, fmt) }) : t("driftContainers", { count: s.drift_containers ?? 0 })}
+            value={driftUnknown ? "—" : signedMoney(s.drift ?? "0", fmt)}
+            tone={driftUnknown || outstanding !== 0 ? "warning" : "default"}
+            sub={driftUnknown ? tm("line") : drift === 0 ? t("detail.driftNone") : outstanding === 0 ? t("detail.driftPosted") : acknowledged !== 0 ? t("detail.driftPartly", { outstanding: signedMoney(outstanding, fmt) }) : t("driftContainers", { count: s.drift_containers ?? 0 })}
           />
         ) : (
           <StatTile label={t("detail.estimated")} hint={t("detail.estimatedHint")} value={money(estimatedTotal, currency, locale)} tone={estimatedTotal > 0 ? "warning" : "default"} sub={estimatedTotal > 0 ? t("detail.estimatedSub", { count: readiness?.containers_with_estimates.length ?? 0 }) : t("detail.estimatedNone")} />
@@ -91,7 +99,11 @@ export default async function PeriodPage({ params }: Params) {
 
       <div className="grid gap-6 xl:grid-cols-3 items-start mb-6">
         <Panel title={closed ? t("detail.breakdownFrozen") : t("detail.breakdownLive")} className="xl:col-span-2">
-          <BreakdownBar fob={Number(s.fob)} families={foldFamilies(s.by_cost_type as Record<string, string>)} currency={currency} locale={locale} fobLabel={t("detail.fob")} familyLabels={familyLabels} ofFobLabel={t("detail.ofFob")} />
+          {s.fob === null ? (
+            <FobMissing lines={s.fob_missing_lines} href={rateHref} />
+          ) : (
+            <BreakdownBar fob={Number(s.fob)} families={foldFamilies(s.by_cost_type as Record<string, string>)} currency={currency} locale={locale} fobLabel={t("detail.fob")} familyLabels={familyLabels} ofFobLabel={t("detail.ofFob")} />
+          )}
         </Panel>
 
         {closed ? (
@@ -108,6 +120,21 @@ export default async function PeriodPage({ params }: Params) {
         ) : readiness ? (
           <Panel title={t("ready.title")} subtitle={t("ready.subtitle")}>
             <ul className="space-y-2 text-sm">
+              {unrated.length > 0 ? (
+                // The one item that refuses the close: each order named, where its rate is set.
+                <li className="flex items-start gap-2.5">
+                  <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-red-600" aria-hidden />
+                  <span className="flex-1 text-slate-700">
+                    {t("ready.norate", { count: unrated.length })}{" "}
+                    {unrated.map((o, i) => (
+                      <span key={o.id}>
+                        {i > 0 ? ", " : null}
+                        <Link href={`/purchase-orders/${o.id}#taux`} className="text-blue-700 hover:underline">{o.po_number}</Link>
+                      </span>
+                    ))}
+                  </span>
+                </li>
+              ) : null}
               {[
                 { n: readiness.containers_with_estimates.length, key: "estimates", href: "/reports/variance" },
                 { n: readiness.invoices_to_review, key: "invoices", href: "/invoices?filter=review" },
@@ -192,7 +219,8 @@ export default async function PeriodPage({ params }: Params) {
                     <Link href={`/container/${l.container_id}`} className="font-mono font-medium text-blue-700 hover:underline">{l.container_number}</Link>
                     <span className="text-slate-600">{t(`driftTable.reason.${l.reason === "left_period" || l.reason === "joined_period" ? l.reason : "costs"}`)}</span>
                     <span className="ml-auto tabular-nums text-slate-500">{money(l.frozen_landed, currency, locale)} → {money(l.live_landed, currency, locale)}</span>
-                    <span className="tabular-nums font-semibold text-amber-800">{signedMoney(l.difference, fmt)}</span>
+                    <span className="tabular-nums font-semibold text-amber-800">{l.difference === null ? "—" : signedMoney(l.difference, fmt)}</span>
+                    {l.fob_missing ? <FobMissingLine href={`/container/${l.container_id}`} /> : null}
                   </div>
                   {l.costs_changed.length > 0 || l.costs_deleted > 0 ? (
                     <ul className="mt-2 space-y-1 text-xs text-slate-600">
@@ -214,7 +242,9 @@ export default async function PeriodPage({ params }: Params) {
           {lines.length > 0 ? (
             <div className="px-5 py-4 border-t border-slate-200 bg-slate-50/60">
               {s.acknowledged_at ? <p className="text-sm text-slate-700 mb-3">{t("ack.state", { amount: signedMoney(acknowledged, fmt), date: dateShort(s.acknowledged_at, locale) })}{s.acknowledged_note ? <span className="text-slate-500"> — {s.acknowledged_note}</span> : null}</p> : null}
-              {outstanding !== 0 ? (
+              {driftUnknown ? (
+                <FobMissing lines={s.fob_missing_lines} href={rateHref} />
+              ) : outstanding !== 0 ? (
                 canDecide ? <AcknowledgeDrift period={period} outstanding={signedMoney(outstanding, fmt)} /> : <p className="text-xs text-slate-500">{t("ack.needsRole")}</p>
               ) : (
                 <p className="flex items-center gap-2 text-sm text-emerald-800"><CheckCircle2 className="w-4 h-4" aria-hidden />{t("ack.quiet")}</p>

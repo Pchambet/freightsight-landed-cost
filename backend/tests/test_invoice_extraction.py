@@ -265,6 +265,63 @@ def test_an_invoiced_cost_of_the_same_type_is_flagged(db: Session, org: Organiza
     assert freight.confidence <= CAPPED_CONFIDENCE
 
 
+def test_the_duplicate_says_the_existing_amount_in_its_own_currency(db: Session, org: Organization) -> None:
+    """The note pairs an amount with a currency, so both come from the same side of the rate: a
+    3 000 USD freight is said as 3 000 USD, not as its 2 760 EUR counter-value labelled USD."""
+    from app.domain.models import (
+        AllocationMethod,
+        Container,
+        ContainerMilestone,
+        Cost,
+        CostScope,
+        CostStatus,
+        TrackingState,
+    )
+
+    db.add(
+        Container(
+            id=CONTAINER_A,
+            org_id=org.id,
+            container_number="MSCU4821990",
+            milestone=ContainerMilestone.DISCHARGED,
+            tracking_state=TrackingState.MANUAL,
+        )
+    )
+    db.add(
+        Cost(
+            org_id=org.id,
+            scope=CostScope.CONTAINER,
+            container_id=CONTAINER_A,
+            cost_type=CostType.OCEAN_FREIGHT,
+            amount=Decimal("3000.00"),
+            currency="USD",
+            fx_rate=Decimal("0.92"),
+            fx_date=date(2026, 3, 1),
+            fx_source="ecb",
+            amount_base=Decimal("2760.00"),
+            allocation_method=AllocationMethod.BY_WEIGHT,
+            cost_date=date(2026, 3, 1),
+            status=CostStatus.ACTUAL,
+            vendor="Kuehne + Nagel France",
+            invoice_number="KN-26-118377",
+        )
+    )
+    db.flush()
+
+    checked = check(
+        db,
+        fx(),
+        read(FRENCH_ONE_CONTAINER),
+        CONTEXT,
+        org_id=org.id,
+        base_currency="EUR",
+        invoice_date=date(2026, 3, 12),
+    )
+    freight = next(ln for ln in checked.lines if ln.cost_type == CostType.OCEAN_FREIGHT)
+    note = next(n for n in freight.notes if n.startswith("@duplicate_cost|"))
+    assert "|3000.00|USD|" in note
+
+
 def test_the_freight_already_recorded_on_the_shipment_is_flagged_too(db: Session, org: Organization) -> None:
     """The duplicate that costs the most is the one that used to go through: a forwarder bills the
     ocean freight per container while the same freight is already on file at shipment level, which

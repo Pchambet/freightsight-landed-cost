@@ -10,13 +10,15 @@ import { money, pct } from "@/lib/format";
  * CFO states it: price = cost ÷ (1 − margin). Arithmetic here is a what-if on screen — nothing is
  * stored, nothing feeds a landed cost — so plain numbers are fine.
  */
-export default function MarginHelper({ unitFob, unitLanded, salePrice, currency }: { unitFob: number; unitLanded: number; salePrice: number | null; currency: string }) {
+export default function MarginHelper({ unitFob, unitLanded, marginOnLanded, salePrice, currency }: { unitFob: number; unitLanded: number; marginOnLanded?: string | null; salePrice: number | null; currency: string }) {
   const t = useTranslations("skus.margin");
   const locale = useLocale();
   const [target, setTarget] = useState(35);
   const needed = target < 100 ? unitLanded / (1 - target / 100) : null;
   const onFob = salePrice && salePrice > 0 ? ((salePrice - unitFob) / salePrice) * 100 : null;
-  const onLanded = salePrice && salePrice > 0 ? ((salePrice - unitLanded) / salePrice) * 100 : null;
+  // The real margin is the API's, the very figure of the tile above it (one decimal, from the exact
+  // unit cost): recomputed here from a rounded cost it read 20,61 % beside the tile's 20,6 %.
+  const onLanded = salePrice && salePrice > 0 ? (marginOnLanded != null ? Number(marginOnLanded) : ((salePrice - unitLanded) / salePrice) * 100) : null;
 
   return (
     <div className="space-y-5">
@@ -24,12 +26,12 @@ export default function MarginHelper({ unitFob, unitLanded, salePrice, currency 
         <div className="grid grid-cols-2 gap-3">
           <div className="rounded-lg border border-slate-200 px-4 py-3">
             <div className="text-xs text-slate-500">{t("onFob")}</div>
-            <div className="mt-1 text-xl font-semibold text-slate-500 line-through decoration-1 figure-proportional">{pct(onFob, locale)}</div>
+            <div className="mt-1 text-xl font-semibold text-slate-500 line-through decoration-1 figure-proportional">{pct(onFob, locale, 1)}</div>
             <div className="text-xs text-slate-500">{t("onFobHint")}</div>
           </div>
           <div className={`rounded-lg border px-4 py-3 ${onLanded < 0 ? "border-red-200 bg-red-50" : "border-emerald-200 bg-emerald-50"}`}>
             <div className="text-xs text-slate-600">{t("onLanded")}</div>
-            <div className={`mt-1 text-xl font-semibold figure-proportional ${onLanded < 0 ? "text-red-800" : "text-emerald-900"}`}>{pct(onLanded, locale)}</div>
+            <div className={`mt-1 text-xl font-semibold figure-proportional ${onLanded < 0 ? "text-red-800" : "text-emerald-900"}`}>{pct(onLanded, locale, 1)}</div>
             <div className="text-xs text-slate-600">{t("onLandedHint", { points: new Intl.NumberFormat(locale === "fr" ? "fr-FR" : "en-GB", { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(onFob - onLanded) })}</div>
           </div>
         </div>

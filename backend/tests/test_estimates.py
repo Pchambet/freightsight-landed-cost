@@ -251,3 +251,31 @@ def test_existing_costs_are_actual_after_the_migration(client: TestClient, org: 
     )
     assert plain.status_code == 201
     assert plain.json()["status"] == "ACTUAL"  # the default, for callers that know nothing of this
+
+
+def test_an_estimate_on_the_goods_value_is_not_made_without_that_value() -> None:
+    """An order with no exchange rate has no value in the base currency: an insurance at a percentage
+    of FOB, or a duty on the customs value, would be estimated on the other lines alone — too low,
+    without a word. Neither is estimated until the rate is set."""
+    from types import SimpleNamespace
+    from typing import cast
+    from uuid import uuid4
+
+    from app.domain.costing.engine import Load
+    from app.domain.costing.service import Computation
+    from app.domain.estimates.service import amount_for, basis_for, theoretical_duty
+    from app.domain.models import RateBasis, RateCard
+
+    box = uuid4()
+
+    def load(price: str | None) -> Load:
+        value = None if price is None else Decimal(price)
+        return Load(uuid4(), box, None, uuid4(), uuid4(), Decimal("10"), value, None, None, Decimal("0.05"),
+                    ("C1", "PO", 1))  # fmt: skip
+
+    insurance = RateCard(basis=RateBasis.PCT_OF_FOB, amount=Decimal("0.5"))
+    for loads, expected in (([load("100")], Decimal("5.00")), ([load("100"), load(None)], None)):
+        cif = {ld.id: ld.fob or Decimal(0) for ld in loads}
+        comp = cast(Computation, SimpleNamespace(loads=loads, result=SimpleNamespace(cif=cif), lines={}))
+        assert amount_for(insurance, basis_for(comp, box)) == expected
+        assert (theoretical_duty(comp, box, []) is None) is (expected is None)

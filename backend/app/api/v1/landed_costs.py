@@ -42,6 +42,8 @@ def _serialize(r: rpt.Report) -> schemas.LandedCostReport:
         costs=[schemas.CostResponse.model_validate(c) for c in r.costs],
         warnings=[schemas.ReportWarning(**w.__dict__) for w in r.warnings],
         notes=[schemas.ReportNote(**n.__dict__) for n in r.notes],
+        fob_missing=r.fob_missing,
+        fob_missing_lines=r.fob_missing_lines,
     )
 
 

@@ -6,10 +6,12 @@ import csv
 import io
 import re
 import unicodedata
+import zipfile
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
-from typing import Literal
+from typing import Any, Literal
 
 from charset_normalizer import from_bytes
 
@@ -95,6 +97,31 @@ TARGET_ALIASES: dict[ImportKind, dict[str, list[str]]] = {
             "volume",
             "cbm",
             "m3",
+        ],
+        "line_weight_kg": [
+            "line_weight_kg",
+            "poids_total",
+            "poids_total_kg",
+            "poids_total_ligne",
+            "poids_total_ligne_kg",
+            "poids_ligne",
+            "poids_ligne_kg",
+            "total_weight",
+            "total_weight_kg",
+            "line_weight",
+        ],
+        "line_volume_cbm": [
+            "line_volume_cbm",
+            "volume_total",
+            "volume_total_m3",
+            "volume_total_ligne",
+            "volume_total_ligne_m3",
+            "volume_ligne",
+            "volume_ligne_m3",
+            "total_volume",
+            "total_volume_cbm",
+            "line_volume",
+            "cbm_total",
         ],
         "hs_code": ["hs_code", "hs", "nc", "code_nc", "taric", "tariff"],
         "duty_rate": ["duty_rate", "duty", "droits", "taux_droits"],
@@ -211,9 +238,12 @@ REQUIRED: dict[ImportKind, list[str]] = {kind: required_fields(kind) for kind in
 
 # A weight or a volume column that does not name its unit is ambiguous: in a real ERP export
 # "Poids (kg)" is as often the weight of the whole line as the weight of one piece, and reading a
-# line total as a unit weight inflates that line's share of the freight by the quantity itself.
-# We keep the mapping (the field exists only per unit) but say so, loudly, next to the mapping.
+# line total as a unit weight inflates that line's share of the freight by the quantity itself. An
+# order file's ambiguous column is therefore never mapped on its own: a person maps it per unit or as
+# the line's total, and the report says so next to the mapping either way.
 _UNIT_EXPLICIT = ("unit", "unitaire", "par_unite", "par_piece", "_pce", "piece")
+#: The order fields an ambiguous header is not mapped to without a person.
+PER_UNIT_FIELDS = ("unit_weight_kg", "unit_volume_cbm")
 
 # Header rows the exporters put above the real one ("Export commandes fournisseurs", "Généré le
 # ..."), and the totals row they put under the last line, are noise between the real table and us.
@@ -246,11 +276,31 @@ _LEADING_ZERO_COMMA_RE = re.compile(r"^[+-]?0?,\d")
 CommaMeaning = Literal["auto", "decimal", "thousands"]
 
 
+#: What one file may hold. The upload is capped at 10 MB, but a 10 MB CSV is 1.75 million rows (half a
+#: gigabyte once read) and a 1.5 KB workbook can claim every cell of Excel: the reader stops at these
+#: and refuses the file by name. A quarter of an importer's orders or costs is a few thousand rows.
+MAX_ROWS = 100_000
+MAX_COLUMNS = 200
+MAX_CELLS = 2_000_000
+#: What a workbook may weigh once unzipped: zipped repetition inflates a thousandfold. Only the sheet
+#: is streamed, so this bounds the sheet; the parts read whole have caps of their own.
+MAX_XLSX_INFLATED_BYTES = 200 * 1024 * 1024
+#: What each part openpyxl parses whole into a tree (styles, workbook, manifest, relations, properties)
+#: may weigh unzipped. The tree costs about thirty times the text: 36 MB of empty `<xf/>` styles took
+#: 1.2 GB. Excel's own ceiling of 64 000 cell styles fits well under it.
+MAX_XLSX_PART_BYTES = 8 * 1024 * 1024
+#: What the shared strings may weigh unzipped: they are read whole too, one Python string each, about
+#: eight times the text for short ones (33 MB of 8-letter labels took 250 MB). A hundred thousand rows
+#: with three distinct labels each fit.
+MAX_XLSX_STRINGS_BYTES = 24 * 1024 * 1024
+
+
 class ImportError_(ValueError):
-    def __init__(self, code: str, message: str):
+    def __init__(self, code: str, message: str, **params: int):
         super().__init__(message)
         self.code = code
         self.message = message
+        self.params = params
 
 
 @dataclass(frozen=True)
@@ -424,12 +474,40 @@ def _tabulate(rows: list[list[str]], encoding: str, delimiter: str) -> Table:
     )
 
 
+def _bounded(rows: Iterable[Sequence[str]]) -> list[list[str]]:
+    """The file's non-blank rows, each without its trailing blank cells — refused by name as soon as
+    it holds more rows, columns or cells than one import may, before the rest is even read."""
+    kept: list[list[str]] = []
+    cells = 0
+    for row in rows:
+        width = len(row)
+        while width and not row[width - 1].strip():
+            width -= 1
+        if not width:
+            continue
+        if width > MAX_COLUMNS:
+            raise ImportError_(
+                "TOO_MANY_COLUMNS", f"More than {MAX_COLUMNS} columns in the file", limit=MAX_COLUMNS
+            )
+        if len(kept) == MAX_ROWS:
+            raise ImportError_("TOO_MANY_ROWS", f"More than {MAX_ROWS} rows in the file", limit=MAX_ROWS)
+        cells += width
+        if cells > MAX_CELLS:
+            raise ImportError_("TOO_MANY_CELLS", f"More than {MAX_CELLS} cells in the file", limit=MAX_CELLS)
+        kept.append(list(row[:width]))
+    return kept
+
+
 def parse_table(content: bytes, filename: str | None = None) -> Table:
     if filename and filename.lower().endswith((".xlsx", ".xlsm")):
         return _parse_xlsx(content)
     text, encoding = decode_bytes(content)
     delimiter = sniff_delimiter(text)
-    rows = list(csv.reader(io.StringIO(text), delimiter=delimiter))
+    try:
+        rows = _bounded(csv.reader(io.StringIO(text), delimiter=delimiter))
+    except csv.Error as e:
+        # A cell longer than the reader accepts (128 KB) or a stray NUL: a file problem, said as one.
+        raise ImportError_("CSV_UNREADABLE", f"The file cannot be read as CSV: {e}") from e
     return _tabulate(rows, encoding, delimiter)
 
 
@@ -447,27 +525,107 @@ def _cell_text(value: object) -> str:
     return str(value).strip()
 
 
-def _parse_xlsx(content: bytes) -> Table:
+def _refuse_past(part: zipfile.ZipInfo, cap: int) -> None:
+    # The declared size bounds what is inflated: the zip reader stops there and fails the CRC.
+    if part.file_size > cap:
+        raise ImportError_(
+            "XLSX_TOO_LARGE", f"{part.filename} is {part.file_size} bytes once unzipped", limit=cap // 2**20
+        )
+
+
+class _Parts(zipfile.ZipFile):
+    """The workbook's archive as openpyxl reads it: every part it parses whole goes through `read`,
+    the sheet and the shared strings through `open`, streamed."""
+
+    def read(self, name: str | zipfile.ZipInfo, pwd: bytes | None = None) -> bytes:
+        _refuse_past(name if isinstance(name, zipfile.ZipInfo) else self.getinfo(name), MAX_XLSX_PART_BYTES)
+        return super().read(name, pwd)
+
+
+def _load_workbook(content: bytes) -> Any:
     try:
-        import openpyxl
+        from openpyxl.reader.excel import ExcelReader
+        from openpyxl.xml.constants import SHARED_STRINGS
     except ImportError as e:  # pragma: no cover
         raise ImportError_("XLSX_UNSUPPORTED", "XLSX support is not installed.") from e
-    wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
-    ws = wb.worksheets[0]
-    rows = [[_cell_text(v) for v in values] for values in ws.iter_rows(values_only=True)]
+
+    class Reader(ExcelReader):  # type: ignore[misc]
+        def read_strings(self) -> None:
+            # Found as openpyxl finds them, by their declared type: the part's name is the file's to choose.
+            strings = self.package.find(SHARED_STRINGS)
+            if strings is not None:
+                _refuse_past(self.archive.getinfo(strings.PartName[1:]), MAX_XLSX_STRINGS_BYTES)
+            super().read_strings()
+
+    reader = Reader(io.BytesIO(content), read_only=True, data_only=True)
+    reader.archive.close()
+    reader.archive = _Parts(io.BytesIO(content))
+    reader.read()
+    return reader.wb
+
+
+def _parse_xlsx(content: bytes) -> Table:
+    try:
+        with zipfile.ZipFile(io.BytesIO(content)) as archive:
+            inflated = sum(item.file_size for item in archive.infolist())
+    except zipfile.BadZipFile as e:
+        # An old .xls renamed .xlsx, a CSV saved under the wrong name, a truncated download.
+        raise ImportError_("XLSX_UNREADABLE", "The file is not an Excel workbook (.xlsx)") from e
+    if inflated > MAX_XLSX_INFLATED_BYTES:
+        raise ImportError_(
+            "XLSX_TOO_LARGE",
+            f"The workbook is {inflated} bytes once unzipped",
+            limit=MAX_XLSX_INFLATED_BYTES // (1024 * 1024),
+        )
+    try:
+        wb = _load_workbook(content)
+        try:
+            ws = wb.worksheets[0]
+            # The sheet's own <dimension> is not believed: one stray formatted cell at XFD1048576 made
+            # openpyxl pad every row to 16 384 columns and yield a million of them. Without it, rows
+            # are as wide as their last cell, and one column past the cap is enough to refuse.
+            ws.reset_dimensions()
+            # The rows a stray cell far below the table leaves in between are skipped before any cell
+            # is looked at: a million of them is a second, not a minute.
+            values = ws.iter_rows(values_only=True, max_col=MAX_COLUMNS + 1)
+            rows = _bounded([_cell_text(v) for v in row] for row in values if row.count(None) != len(row))
+        finally:
+            wb.close()
+    except ImportError_:
+        raise
+    except Exception as e:
+        if isinstance(e.__cause__, ImportError_):
+            raise e.__cause__ from None  # a cap, wrapped by openpyxl in its own ValueError
+        # Whatever openpyxl trips on inside a zip — a missing part, broken XML — is the file's fault,
+        # and the person can do something about it; a 500 tells them nothing.
+        raise ImportError_("XLSX_UNREADABLE", f"The workbook cannot be read: {type(e).__name__}") from e
     return _tabulate(rows, "xlsx", "")
 
 
 def suggest_mapping(kind: ImportKind, columns: list[str]) -> dict[str, str]:
-    """target field -> source column, by alias match."""
+    """target field -> source column, by alias match. An order file's weight or volume column that
+    does not say per unit or per line is left unmapped (see `_UNIT_EXPLICIT`)."""
     normalised = {normalize_header(c): c for c in columns}
     mapping: dict[str, str] = {}
     for target, aliases in TARGET_ALIASES[kind].items():
         for alias in aliases:
-            if alias in normalised and normalised[alias] not in mapping.values():
-                mapping[target] = normalised[alias]
-                break
+            column = normalised.get(alias)
+            if column is None or column in mapping.values():
+                continue
+            per_unit = kind is ImportKind.PURCHASE_ORDERS and target in PER_UNIT_FIELDS
+            if per_unit and is_ambiguous_unit_column(column):
+                continue
+            mapping[target] = column
+            break
     return mapping
+
+
+def looks_like(kind: ImportKind, column: str) -> str | None:
+    """The per-unit field an order file's unmapped column reads like — weight or volume — if any."""
+    if kind is not ImportKind.PURCHASE_ORDERS:
+        return None
+    name = normalize_header(column)
+    return next((field for field in PER_UNIT_FIELDS if name in TARGET_ALIASES[kind][field]), None)
 
 
 def header_signature(columns: list[str]) -> str:
@@ -484,6 +642,7 @@ def infer_comma_conventions(table: Table, columns: set[str]) -> dict[str, Column
     written by any French spreadsheet — read as 1 250 kg and swallow a whole container's freight.
     """
     conventions: dict[str, ColumnNumbers] = {}
+    unsettled: dict[str, str] = {}
     for column in columns:
         decimal_example: str | None = None
         thousands_example: str | None = None
@@ -512,14 +671,19 @@ def infer_comma_conventions(table: Table, columns: set[str]) -> dict[str, Column
         elif thousands_example is not None:
             conventions[column] = ColumnNumbers("thousands", example=thousands_example)
         elif comma_example is not None:
-            # Nothing in the column decides. "1,250" alone is genuinely both readings; a file
-            # written with ";" is a French spreadsheet (Excel FR switches the delimiter precisely
-            # because the comma is taken), so read it in French — and say so in the report, since
-            # the difference is a factor of a thousand on a freight allocation basis.
-            french = table.delimiter == ";"
-            conventions[column] = ColumnNumbers(
-                "decimal" if french else "thousands", ambiguous=True, example=comma_example
-            )
+            unsettled[column] = comma_example
+    # Nothing in these columns decides: "1,250" alone is genuinely both readings. One file is written
+    # one way, so a convention another column proves holds for them too — a Google Sheets FR export
+    # uses "," as its delimiter and still writes "12,5". When no column proves anything, or columns
+    # prove both, the delimiter decides: ";" is a French spreadsheet (Excel FR switches it precisely
+    # because the comma is taken). Either way the report says so, since the difference is a factor of a
+    # thousand on a freight allocation basis.
+    proven = {c.comma for c in conventions.values()}
+    comma: CommaMeaning = (
+        proven.pop() if len(proven) == 1 else "decimal" if table.delimiter == ";" else "thousands"
+    )
+    for column, example in unsettled.items():
+        conventions[column] = ColumnNumbers(comma, ambiguous=True, example=example)
     return conventions
 
 

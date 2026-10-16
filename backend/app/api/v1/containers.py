@@ -13,8 +13,10 @@ from app.api.v1.deps import WriterDep
 from app.core.errors import Conflict, NotFound, Unprocessable
 from app.core.money import q2
 from app.core.tenancy import TenantDep, TenantSession
+from app.domain.alerts.service import restate_dnd_risk
 from app.domain.audit.service import LOADS_REPLACED, record
 from app.domain.costing.service import compute, recompute_org
+from app.domain.costing.value import missing_code, total
 from app.domain.models import (
     Container,
     ContainerLoad,
@@ -26,7 +28,6 @@ from app.domain.models import (
     Shipment,
 )
 from app.domain.periods import service as periods
-from app.domain.tracking.state import derive_dnd
 
 router = APIRouter(prefix="/containers", tags=["containers"])
 
@@ -98,13 +99,16 @@ def list_containers(
     frozen_in = periods.frozen_periods(t.db, t.org_id)
     out = []
     for c in containers:
-        fob = sum((ld.fob for ld in comp.loads if ld.container_id == c.id), Decimal(0))
+        values = [ld.fob for ld in comp.loads if ld.container_id == c.id]
+        fob = total(values)
         s = schemas.ContainerSummary.model_validate(c)
         s.closed_period = frozen_in.get(c.id)
         s.shipment_reference = c.shipment.reference if c.shipment else None
         s.po_numbers = sorted({ld.po_line.purchase_order.po_number for ld in c.loads})
         s.load_count = len(c.loads)
-        s.fob_base = q2(fob)
+        s.fob_base = None if fob is None else q2(fob)
+        s.fob_missing_lines = values.count(None)
+        s.fob_missing = missing_code(s.fob_missing_lines)
         s.allocated_base = q2(allocated.get(c.id, Decimal(0)))
         s.cost_types_present = [CostType(v) for v in sorted(cost_types.get(c.id, set()))]
         out.append(s)
@@ -161,7 +165,9 @@ def update_container(
         field = _MILESTONE_TIMESTAMP.get(payload.milestone)
         if field and getattr(c, field) is None:
             setattr(c, field, datetime.now(UTC))
-    derive_dnd(c, t.org)
+    # This is how a discharge arrives without a tracking provider: say it now if the risk rose, as
+    # every other way in does. A box typed in already HIGH was otherwise warned of only once incurring.
+    restate_dnd_risk(t.db, t.org, c, datetime.now(UTC))
     t.db.flush()
     if "shipment_id" in changes:
         recompute_org(t.db, t.org)

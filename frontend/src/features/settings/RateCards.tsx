@@ -71,7 +71,9 @@ export default function RateCards({ cards, currency }: { cards: RateCard[]; curr
 
   return (
     <>
-    <Card title={t("title")} right={<span className="text-xs text-slate-500 max-w-md text-right">{t("hint", { demurrage: typeLabel("DEMURRAGE") })}</span>}>
+    {/* No title of its own: the section it sits in already says "Barèmes d'estimation". */}
+    <Card>
+      <p className="px-5 py-3 border-b border-slate-200 text-xs text-slate-500">{t("hint", { demurrage: typeLabel("DEMURRAGE") })}</p>
       <div className="overflow-x-auto">
         <table className="min-w-full divide-y divide-slate-200 text-sm">
           <thead className="bg-slate-50"><tr><th className={th}>{t("costType")}</th><th className={th}>{t("scope")}</th><th className={th}>{t("basis")}</th><th className={thRight}>{t("amount")}</th><th className={th}>{t("hsCode")}</th><th className={th}>{t("notes")}</th><th className={th}></th></tr></thead>

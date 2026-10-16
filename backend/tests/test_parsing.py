@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import io
+import re
+import time
+import zipfile
 from decimal import Decimal
 from pathlib import Path
 
 import pytest
 
+from app.domain.imports import parsing
+from app.domain.imports.fields import FIELDS
 from app.domain.imports.parsing import (
     ColumnNumbers,
     ImportError_,
@@ -68,7 +73,6 @@ def test_excel_fr_bom_semicolon_and_aliases() -> None:
         "sku": "Réf",
         "quantity": "Qté",
         "unit_price": "Prix unitaire",
-        "unit_weight_kg": "Poids",
         "container_number": "Conteneur",
     }
     assert table.rows[0]["Fournisseur"] == "Société Générale Pneus"
@@ -141,7 +145,8 @@ def test_the_header_is_found_under_a_title_block_and_the_totals_row_is_dropped()
     mapping = suggest_mapping(ImportKind.PURCHASE_ORDERS, table.columns)
     assert mapping["po_number"] == "N° commande"
     assert mapping["sku"] == "Réf. article" and mapping["unit_price"] == "PU HT"
-    assert mapping["unit_weight_kg"] == "Poids (kg)" and mapping["unit_volume_cbm"] == "Volume (m3)"
+    # « Poids (kg) » is as often the line's weight as one piece's: a person says which (see below)
+    assert "unit_weight_kg" not in mapping and "unit_volume_cbm" not in mapping
     assert mapping["container_number"] == "N° TC"
 
 
@@ -150,7 +155,7 @@ def test_ebp_and_odoo_column_names_are_recognised() -> None:
     mapping = suggest_mapping(ImportKind.PURCHASE_ORDERS, ebp.columns)
     assert mapping["po_number"] == "N° cde" and mapping["sku"] == "Code article"
     assert mapping["description"] == "Libellé" and mapping["unit_price"] == "Prix unitaire HT"
-    assert mapping["unit_weight_kg"] == "Poids net" and mapping["unit_volume_cbm"] == "Cubage"
+    assert "unit_weight_kg" not in mapping and "unit_volume_cbm" not in mapping
 
     odoo = parse_table((FIXTURES / "imports" / "odoo_lignes_commande.csv").read_bytes())
     mapping = suggest_mapping(ImportKind.PURCHASE_ORDERS, odoo.columns)
@@ -164,6 +169,33 @@ def test_a_weight_or_volume_column_that_does_not_name_its_unit_is_ambiguous() ->
     assert not is_ambiguous_unit_column("Poids unitaire (kg)")
     assert not is_ambiguous_unit_column("unit_weight_kg")
     assert not is_ambiguous_unit_column("Volume unitaire (m³)")
+
+
+def test_a_weight_is_mapped_per_unit_or_per_line_only_when_its_header_says_which() -> None:
+    """A line total read as a unit weight multiplies that line's share of the freight by its quantity:
+    two lines of 50 kg each, 100 and 10 pieces, split 3 000 € as 2 727,27 / 272,73 instead of 1 500 /
+    1 500. A header that does not say which is left for a person to map, to one field or the other."""
+    columns = ["po_number", "sku", "Poids unitaire (kg)", "Volume total (m3)", "Poids brut", "Cubage"]
+    mapping = suggest_mapping(ImportKind.PURCHASE_ORDERS, columns)
+    assert (
+        mapping["unit_weight_kg"] == "Poids unitaire (kg)"
+        and mapping["line_volume_cbm"] == "Volume total (m3)"
+    )
+    assert "Poids brut" not in mapping.values() and "Cubage" not in mapping.values()
+    assert suggest_mapping(ImportKind.PURCHASE_ORDERS, ["Poids total ligne (kg)"]) == {
+        "line_weight_kg": "Poids total ligne (kg)"
+    }
+    # a tariff is one row per article: its weight can only be one piece's
+    assert suggest_mapping(ImportKind.PRODUCTS, ["sku", "Poids"])["unit_weight_kg"] == "Poids"
+
+
+@pytest.mark.parametrize("kind", list(FIELDS))
+def test_a_template_written_with_the_api_headers_maps_itself(kind: ImportKind) -> None:
+    for language in ("header_fr", "header_en"):
+        columns = [getattr(field, language) for field in FIELDS[kind]]
+        assert suggest_mapping(kind, columns) == {
+            field.name: getattr(field, language) for field in FIELDS[kind]
+        }, language
 
 
 def test_an_xlsx_keeps_long_numbers_readable_and_finds_its_header() -> None:
@@ -207,3 +239,179 @@ def test_a_real_totals_line_is_still_dropped(label: str) -> None:
     content = f"{header}\nPO-1;Acme;A1;Cable;10;12,50\n{label};;;;10;125,00\n".encode()
     table = parse_table(content)
     assert table.totals_row_ignored and len(table.rows) == 1
+
+
+def _xlsx(*rows: list[object]) -> bytes:
+    openpyxl = pytest.importorskip("openpyxl")
+    wb = openpyxl.Workbook()
+    for row in rows:
+        wb.active.append(row)
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    return buffer.getvalue()
+
+
+def _with_stray_cell(content: bytes) -> bytes:
+    """The same workbook with one empty formatted cell in the very last cell of the sheet, XFD1048576,
+    and a sheet that says it spans all of Excel: what a slip of the mouse in a real file does."""
+    source, out = zipfile.ZipFile(io.BytesIO(content)), io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as target:
+        for item in source.infolist():
+            data = source.read(item.filename)
+            if item.filename == "xl/worksheets/sheet1.xml":
+                data = re.sub(rb'<dimension ref="[^"]*"', b'<dimension ref="A1:XFD1048576"', data)
+                stray = b'<row r="1048576"><c r="XFD1048576" s="0"/></row>'
+                data = data.replace(b"</sheetData>", stray + b"</sheetData>")
+            target.writestr(item, data)
+    return out.getvalue()
+
+
+def test_a_sheet_that_claims_every_row_and_column_of_excel_is_read_by_its_cells() -> None:
+    """A 1.5 KB workbook with a cell at XFD1048576 made openpyxl pad every row to 16 384 columns and
+    yield a million rows: 143 GB projected, the API killed for every tenant."""
+    content = _with_stray_cell(_xlsx(["po_number", "sku", "quantity"], ["PO-1", "A", 10]))
+    started = time.monotonic()
+    table = parse_table(content, "commandes.xlsx")
+    assert time.monotonic() - started < 5
+    assert table.columns == ["po_number", "sku", "quantity"]
+    assert table.rows == [{"po_number": "PO-1", "sku": "A", "quantity": "10"}]
+
+
+def test_a_file_over_the_row_cap_is_refused_by_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(parsing, "MAX_ROWS", 3)
+    with pytest.raises(ImportError_) as exc:
+        parse_table(b"po_number;sku\nPO-1;A\nPO-2;B\nPO-3;C\n")
+    assert exc.value.code == "TOO_MANY_ROWS" and exc.value.params == {"limit": 3}
+    with pytest.raises(ImportError_) as exc:
+        parse_table(_xlsx(["po_number", "sku"], ["PO-1", "A"], ["PO-2", "B"], ["PO-3", "C"]), "f.xlsx")
+    assert exc.value.code == "TOO_MANY_ROWS"
+    # blank rows are not rows
+    assert len(parse_table(b"po_number;sku\n\n\nPO-1;A\n;\nPO-2;B\n").rows) == 2
+
+
+def test_a_file_over_the_column_or_cell_cap_is_refused_by_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    wide = ";".join(f"c{i}" for i in range(parsing.MAX_COLUMNS + 1)).encode()
+    with pytest.raises(ImportError_) as exc:
+        parse_table(wide + b"\n" + b"1;" * parsing.MAX_COLUMNS + b"1\n")
+    assert exc.value.code == "TOO_MANY_COLUMNS" and exc.value.params == {"limit": parsing.MAX_COLUMNS}
+    with pytest.raises(ImportError_) as exc:
+        far_right: list[object] = ["PO-1", *[None] * (parsing.MAX_COLUMNS - 1), "far"]
+        parse_table(_xlsx(["po_number", "sku"], far_right), "f.xlsx")
+    assert exc.value.code == "TOO_MANY_COLUMNS"
+    # empty cells past the last column are no column at all
+    assert parse_table(b"po_number;sku" + b";" * 300 + b"\nPO-1;A\n").columns == ["po_number", "sku"]
+
+    monkeypatch.setattr(parsing, "MAX_CELLS", 5)
+    with pytest.raises(ImportError_) as exc:
+        parse_table(b"po_number;sku\nPO-1;A\nPO-2;B\n")
+    assert exc.value.code == "TOO_MANY_CELLS" and exc.value.params == {"limit": 5}
+
+
+def test_a_workbook_that_inflates_past_the_cap_is_refused_before_it_is_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Shared strings are loaded whole even in read-only mode: a few KB of zipped repetition is
+    gigabytes once inflated. The sizes the archive declares are checked before anything is read."""
+    monkeypatch.setattr(parsing, "MAX_XLSX_INFLATED_BYTES", 1000)
+    with pytest.raises(ImportError_) as exc:
+        parse_table(_xlsx(["po_number", "sku"], ["PO-1", "A"]), "f.xlsx")
+    assert exc.value.code == "XLSX_TOO_LARGE"
+
+
+def _with_part(content: bytes, name: str, data: bytes, content_type: str, rel_type: str) -> bytes:
+    """The same workbook with one more part, declared in the manifest and the workbook's relations."""
+    source, out = zipfile.ZipFile(io.BytesIO(content)), io.BytesIO()
+    ns = "http://schemas.openxmlformats.org"
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as target:
+        for item in source.infolist():
+            if item.filename == name:
+                continue
+            part = source.read(item.filename)
+            if item.filename == "[Content_Types].xml":
+                override = f'<Override PartName="/{name}" ContentType="{content_type}"/></Types>'
+                part = part.replace(b"</Types>", override.encode())
+            if item.filename == "xl/_rels/workbook.xml.rels":
+                rel = f'<Relationship Id="rId99" Type="{ns}/officeDocument/2006/relationships/{rel_type}" '
+                rel += f'Target="/{name}"/></Relationships>'
+                part = part.replace(b"</Relationships>", rel.encode())
+            target.writestr(item, part)
+        target.writestr(name, data)
+    return out.getvalue()
+
+
+def test_a_workbook_part_parsed_whole_is_refused_past_its_own_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+    """openpyxl builds a tree of every part but the sheet: an 89 KB workbook whose styles hold two
+    million empty `<xf/>` — 36 MB unzipped, far under the archive's cap — took 22 s and 1.2 GB."""
+    monkeypatch.setattr(parsing, "MAX_XLSX_PART_BYTES", 20_000)
+    ns = 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+    styles = f'<styleSheet {ns}><cellXfs count="5000">{"<xf/>" * 5000}</cellXfs></styleSheet>'.encode()
+    content = _xlsx(["po_number", "sku"], ["PO-1", "A"])
+    source, out = zipfile.ZipFile(io.BytesIO(content)), io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as target:
+        for item in source.infolist():
+            data = styles if item.filename == "xl/styles.xml" else source.read(item.filename)
+            target.writestr(item, data)
+    with pytest.raises(ImportError_) as exc:
+        parse_table(out.getvalue(), "f.xlsx")
+    assert exc.value.code == "XLSX_TOO_LARGE"
+
+    # the sheet itself is streamed and capped by its rows, not by this
+    rows: list[list[object]] = [[f"PO-{i}", "A"] for i in range(2000)]
+    long = _xlsx(["po_number", "sku"], *rows)
+    assert zipfile.ZipFile(io.BytesIO(long)).getinfo("xl/worksheets/sheet1.xml").file_size > 20_000
+    assert len(parse_table(long, "f.xlsx").rows) == 2000
+
+
+def test_a_workbook_whose_shared_strings_inflate_past_their_cap_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The shared strings are read whole, one Python string each: a 414 KB workbook of ten million
+    "x" took 49 s and a gigabyte before a single row was looked at."""
+    monkeypatch.setattr(parsing, "MAX_XLSX_STRINGS_BYTES", 20_000)
+    ns = 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+    strings = f'<sst {ns} count="2000" uniqueCount="2000">{"<si><t>x</t></si>" * 2000}</sst>'.encode()
+    content = _with_part(
+        _xlsx(["po_number", "sku"], ["PO-1", "A"]),
+        "xl/sharedStrings.xml",
+        strings,
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml",
+        "sharedStrings",
+    )
+    with pytest.raises(ImportError_) as exc:
+        parse_table(content, "f.xlsx")
+    assert exc.value.code == "XLSX_TOO_LARGE"
+    monkeypatch.setattr(parsing, "MAX_XLSX_STRINGS_BYTES", 40_000)
+    assert parse_table(content, "f.xlsx").rows == [{"po_number": "PO-1", "sku": "A"}]
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 512,
+        b"po_number;sku\nPO-1;A\n",
+        b"PK\x03\x04garbage",
+    ],
+    ids=["xls-renamed", "csv-renamed", "truncated"],
+)
+def test_a_file_that_is_not_a_workbook_is_refused_by_name(content: bytes) -> None:
+    with pytest.raises(ImportError_) as exc:
+        parse_table(content, "ledger.xlsx")
+    assert exc.value.code == "XLSX_UNREADABLE"
+
+
+def test_a_csv_cell_longer_than_the_reader_accepts_is_refused_by_name() -> None:
+    with pytest.raises(ImportError_) as exc:
+        parse_table(b'po_number;sku\nPO-1;"' + b"x" * 200_000 + b'"\n')
+    assert exc.value.code == "CSV_UNREADABLE"
+
+
+def test_a_column_nothing_settles_follows_the_convention_another_column_proves() -> None:
+    """Google Sheets FR exports with "," and quotes "12,5": the price column proves the decimal comma,
+    and the weight column's "1,250" was still read as 1 250 kg because the delimiter was not ";"."""
+    table = parse_table(b'po_number,sku,unit_price,weight\nPO-1,A,"12,5","1,250"\nPO-2,B,"7,9","2,500"\n')
+    conventions = infer_comma_conventions(table, {"unit_price", "weight"})
+    assert conventions["weight"] == ColumnNumbers("decimal", ambiguous=True, example="1,250")
+
+    # and the other way round: a column that proves the English reading settles its neighbours
+    english = parse_table(b'po_number;sku;unit_price;weight\nPO-1;A;"1,250.50";"1,250"\n')
+    assert infer_comma_conventions(english, {"unit_price", "weight"})["weight"].comma == "thousands"

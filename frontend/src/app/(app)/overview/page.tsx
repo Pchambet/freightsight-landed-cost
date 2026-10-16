@@ -11,6 +11,8 @@ import Panel from "@/components/ui/Panel";
 import StatTile, { type Delta } from "@/components/ui/StatTile";
 import LoadSampleDataButton from "@/features/containers/LoadSampleDataButton";
 import RankBars, { type RankRow } from "@/features/overview/RankBars";
+import FobMissing, { FobMissingLine } from "@/features/report/FobMissing";
+import WithoutCharge, { WithoutChargeLine } from "@/features/report/WithoutCharge";
 import { WINDOWS, monthLabel, monthTitle, windows, type WindowMonths } from "@/features/overview/period";
 import { skuHref } from "@/features/skus/href";
 import { api } from "@/lib/api/client";
@@ -27,7 +29,7 @@ const num = (v: string | number | null | undefined) => {
 };
 
 export default async function OverviewPage({ searchParams }: { searchParams: Promise<{ months?: string; notice?: string }> }) {
-  const [sp, t, tf, locale] = await Promise.all([searchParams, getTranslations("overview"), getTranslations("costFamily"), getLocale()]);
+  const [sp, t, tf, tm, tw, locale] = await Promise.all([searchParams, getTranslations("overview"), getTranslations("costFamily"), getTranslations("fobMissing"), getTranslations("withoutCharge"), getLocale()]);
   const months: WindowMonths = (WINDOWS as readonly number[]).includes(Number(sp.months)) ? (Number(sp.months) as WindowMonths) : 6;
   const { current } = windows(months);
   const cur = { period_from: current.from, period_to: current.to };
@@ -49,15 +51,22 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
   // The headline figures come from the API's own overview (same numbers as the detailed reports, by
   // test); only what it does not carry — the charges, per month and per family — is read from the
   // landed-cost report of the same dates.
-  const fob = num(o.current.fob);
-  const landed = num(o.current.landed);
+  // Null while a line of the period has no exchange rate (`fob_missing_lines`): shown as a dash and
+  // said in words, never read as 0. The charges are set against `charged_fob`, the goods of the
+  // containers that carry any: one with none is in the FOB and in no landed figure.
+  const fob = o.current.fob === null ? null : num(o.current.fob);
+  const chargedFob = o.current.charged_fob === null ? null : num(o.current.charged_fob);
+  const bare = o.current.containers_without_charge;
+  const estimated = num(o.current.estimated);
   const fees = Object.entries(o.by_cost_type ?? {}).reduce((sum, [type, amount]) => (type === "IMPORT_VAT" ? sum : sum + num(amount as string)), 0);
   const coef = o.current.coefficient !== null ? num(o.current.coefficient) : null;
   const coefBefore = o.previous.coefficient !== null ? num(o.previous.coefficient) : null;
-  const hasData = fob > 0 || fees > 0;
+  const unvalued = o.current.fob_missing_lines ?? 0;
+  const hasData = (fob ?? 0) > 0 || fees > 0 || unvalued > 0;
 
   const familyLabels = Object.fromEntries(COST_FAMILIES.map((f) => [f, tf(f)])) as Record<CostFamily, string>;
   const ratio = (v: number) => new Intl.NumberFormat(locale === "fr" ? "fr-FR" : "en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v);
+  const ratioOf = (coefficient: string | null) => (coefficient === null ? "—" : ratio(num(coefficient)));
   const signed = (v: number, digits = 1) => `${v > 0 ? "+" : v < 0 ? "−" : ""}${new Intl.NumberFormat(locale === "fr" ? "fr-FR" : "en-GB", { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(Math.abs(v))}`;
   const versus = t("versus", { months });
   // A "before" only compares if it was a period of activity too: against the first weeks of a
@@ -77,27 +86,28 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
   const yearTurns = new Set(current.months.map((k) => k.slice(0, 4))).size > 1;
   const columns: StackedColumn[] = current.months.map((key) => {
     const b = bucket.get(key);
-    const bFob = num(b?.fob);
     return {
       key,
       label: monthLabel(key, locale, yearTurns),
       title: monthTitle(key, locale),
       families: foldFamilies(b?.by_cost_type as Record<string, string> | undefined),
-      note: b ? t("monthNote", { loads: b.load_count, coef: bFob > 0 ? ratio(num(b.landed) / bFob) : "—" }) : t("monthEmpty"),
+      note: b ? t("monthNote", { loads: b.load_count, coef: ratioOf(b.coefficient) }) : t("monthEmpty"),
       href: `/reports?group_by=cost_type&from=${key}-01&to=${key}-${String(new Date(Date.UTC(Number(key.slice(0, 4)), Number(key.slice(5, 7)), 0)).getUTCDate()).padStart(2, "0")}`,
     };
   });
-  const coefSpark = current.months.map((k) => bucket.get(k)).filter((b) => b && num(b.fob) > 0).map((b) => num(b!.landed) / num(b!.fob));
+  const coefSpark = current.months.flatMap((k) => bucket.get(k)?.coefficient ?? []).map(num);
   const undated = bucket.get("unknown");
 
+  // A supplier whose goods have no known value, or none charged yet, cannot be ranked: it comes last,
+  // with a dash and why.
   const suppliers: RankRow[] = (o.by_supplier ?? [])
-    .filter((b) => num(b.fob) > 0)
+    .filter((b) => b.fob === null || num(b.fob) > 0)
     .map((b) => ({
       key: b.key,
       label: b.key === "unknown" ? t("unknownSupplier") : b.label,
-      value: (num(b.allocated) / num(b.fob)) * 100,
-      display: ratio(num(b.landed) / num(b.fob)),
-      sub: t("supplierSub", { fees: money(b.allocated, currency, locale), fob: money(b.fob, currency, locale) }),
+      value: b.coefficient === null ? 0 : (num(b.allocated) / num(b.charged_fob)) * 100,
+      display: ratioOf(b.coefficient),
+      sub: b.charged_fob === null && b.fob_missing ? tm("line") : b.charged_fob === null ? tw("count", { count: b.containers_without_charge }) : t("supplierSub", { fees: money(b.allocated, currency, locale), fob: money(b.charged_fob, currency, locale) }),
       href: `/reports?group_by=supplier&from=${current.from}&to=${current.to}`,
     }))
     .sort((x, y) => y.value - x.value)
@@ -247,11 +257,22 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
               label={t("kpi.coef")}
               hint={t("kpi.coefHint")}
               value={coef !== null ? ratio(coef) : "—"}
-              sub={coef !== null ? t("kpi.coefSub", { pct: pct((coef - 1) * 100, locale) }) : undefined}
+              sub={coef !== null ? t("kpi.coefSub", { pct: pct((coef - 1) * 100, locale) }) : unvalued > 0 ? tm("line") : bare > 0 ? tw("count", { count: bare }) : undefined}
               delta={comparable && coef !== null && coefBefore !== null ? { text: signed(coef - coefBefore, 2), direction: Math.abs(coef - coefBefore) < 0.005 ? "flat" : coef > coefBefore ? "up" : "down", good: coef <= coefBefore, versus } : null}
               spark={coefSpark}
             />
-            <StatTile label={t("kpi.fees")} hint={t("kpi.feesHint")} value={money(fees, currency, locale)} sub={t("kpi.feesSub", { fob: money(fob, currency, locale), containers: o.current.containers })} href={`/reports?group_by=cost_type&from=${current.from}&to=${current.to}`} />
+            <StatTile
+              label={t("kpi.fees")}
+              hint={t("kpi.feesHint")}
+              value={money(fees, currency, locale)}
+              sub={
+                <>
+                  {t("kpi.feesSub", { fob: money(fob, currency, locale), containers: o.current.containers })}
+                  {estimated > 0 ? <span className="block font-medium text-violet-800">{t("kpi.feesEstimated", { amount: money(estimated, currency, locale) })}</span> : null}
+                </>
+              }
+              href={`/reports?group_by=cost_type&from=${current.from}&to=${current.to}`}
+            />
             <StatTile
               label={t("kpi.variance")}
               hint={t("kpi.varianceHint")}
@@ -270,6 +291,8 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
               href="/reports#dnd"
             />
           </div>
+          <FobMissing lines={unvalued} className="-mt-3 mb-6" />
+          <WithoutCharge containers={bare} className="-mt-3 mb-6" />
 
           <div className="grid gap-6 xl:grid-cols-3 mb-6 items-start">
             <Panel
@@ -282,8 +305,12 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
               {undated && num(undated.allocated) > 0 ? <p className="mt-3 text-xs text-slate-500">{t("structure.undated", { amount: money(undated.allocated, currency, locale) })}</p> : null}
             </Panel>
 
-            <Panel title={t("breakdown.title")} subtitle={t("breakdown.subtitle", { landed: money(landed, currency, locale) })}>
-              <BreakdownBar fob={fob} families={foldFamilies(o.by_cost_type as Record<string, string> | undefined)} currency={currency} locale={locale} fobLabel={t("breakdown.fob")} familyLabels={familyLabels} ofFobLabel={t("breakdown.ofFob")} dense />
+            <Panel title={t("breakdown.title")} subtitle={t("breakdown.subtitle", { landed: money(o.current.landed, currency, locale) })}>
+              {chargedFob === null ? (
+                unvalued > 0 ? <FobMissing lines={unvalued} /> : <WithoutCharge containers={bare} href={null} />
+              ) : (
+                <BreakdownBar fob={chargedFob} families={foldFamilies(o.by_cost_type as Record<string, string> | undefined)} currency={currency} locale={locale} fobLabel={t("breakdown.fob")} familyLabels={familyLabels} ofFobLabel={t("breakdown.ofFob")} dense />
+              )}
             </Panel>
           </div>
 
@@ -312,11 +339,16 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
                         const q = num(s.quantity);
                         return (
                           <tr key={s.sku} className="hover:bg-slate-50">
-                            <td className="px-5 py-2.5"><Link href={skuHref(s.sku)} className="font-mono text-blue-700 hover:underline">{s.sku}</Link></td>
+                            <td className="px-5 py-2.5">
+                              <Link href={skuHref(s.sku)} className="font-mono text-blue-700 hover:underline">{s.sku}</Link>
+                              {num(s.estimated) > 0 ? <span className="ml-2 rounded bg-violet-50 px-1.5 py-0.5 text-[11px] font-medium text-violet-800 ring-1 ring-inset ring-violet-600/20">{t("skus.estimated")}</span> : null}
+                              {s.fob === null ? <FobMissingLine /> : null}
+                              <WithoutChargeLine count={s.containers_without_charge} />
+                            </td>
                             <td className="px-3 py-2.5 text-right tabular-nums text-slate-600">{qty(s.quantity, locale)}</td>
-                            <td className="px-3 py-2.5 text-right tabular-nums text-slate-600">{q > 0 ? money(num(s.fob) / q, currency, locale) : "—"}</td>
+                            <td className="px-3 py-2.5 text-right tabular-nums text-slate-600">{q > 0 && s.fob !== null ? money(num(s.fob) / q, currency, locale) : "—"}</td>
                             <td className="px-3 py-2.5 text-right tabular-nums font-medium text-slate-900">{money(s.unit_landed_cost, currency, locale)}</td>
-                            <td className="px-5 py-2.5 text-right tabular-nums text-slate-600">{num(s.fob) > 0 ? ratio(num(s.landed) / num(s.fob)) : "—"}</td>
+                            <td className="px-5 py-2.5 text-right tabular-nums text-slate-600">{ratioOf(s.coefficient)}</td>
                           </tr>
                         );
                       })}

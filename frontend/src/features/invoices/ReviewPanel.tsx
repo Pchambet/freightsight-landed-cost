@@ -69,7 +69,7 @@ function LineRow({ invoiceId, line, targets, editable, confirmed }: { invoiceId:
             <div className="text-sm font-medium text-slate-900 truncate">{line.line_no}. {line.description}</div>
             <span className="flex items-center gap-2 shrink-0">
               {missing.length > 0 ? <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-800 ring-1 ring-inset ring-amber-600/20">{t("toComplete", { what: missing.join(", ") })}</span> : null}
-              <ConfidenceBadge value={line.confidence} band={(line as { confidence_band?: "HIGH" | "MEDIUM" | "LOW" }).confidence_band} confirmed={confirmed} />
+              <ConfidenceBadge value={line.confidence} band={line.confidence_band} confirmed={confirmed} />
             </span>
           </div>
           {editable ? (
@@ -221,7 +221,11 @@ function AddLineForm({ invoiceId, targets }: { invoiceId: string; targets: Targe
   );
 }
 
-export default function ReviewPanel({ invoice, targets }: { invoice: InvoiceResponse; targets: Targets }) {
+/**
+ * `pageHasNextStep`: the page's own « Prochaine étape » card already says where to go once confirmed;
+ * the panel's own pointer is only for the case it has nothing to say (lines on a shipment or an order).
+ */
+export default function ReviewPanel({ invoice, targets, pageHasNextStep = false }: { invoice: InvoiceResponse; targets: Targets; pageHasNextStep?: boolean }) {
   const t = useTranslations("invoices.detail");
   const noteT = useTranslations("invoices.lineNotes");
   const typeLabel = useTranslations("domain.costType");
@@ -291,7 +295,7 @@ export default function ReviewPanel({ invoice, targets }: { invoice: InvoiceResp
 
   // Only the fresh, just-confirmed feedback — not a standing fallback recomputed from `lines` on every
   // load, which used to duplicate the page's own "Prochaine étape" card word for word.
-  const continueLinks = continueTo ?? [];
+  const continueLinks = pageHasNextStep ? [] : (continueTo ?? []);
 
   return (
     <div>

@@ -4,7 +4,8 @@ import { NEXT_IMPORT_KIND } from "@/lib/domain";
 export type WorkflowStep = {
   descriptionKey: string;
   descriptionParams?: Record<string, string | number>;
-  primary: { href: string; labelKey: string; labelParams?: Record<string, string | number> };
+  /** null when the person is already where the step happens: a link to the same place reads as another step. */
+  primary: { href: string; labelKey: string; labelParams?: Record<string, string | number> } | null;
   secondary: { href: string; labelKey: string; labelParams?: Record<string, string | number> }[];
   variant: "default" | "success" | "warning";
 };
@@ -160,21 +161,15 @@ export function containersHubStep(
   return null;
 }
 
-export function invoicesHubStep(review: number, latestReviewId?: string): WorkflowStep {
-  if (review > 0 && latestReviewId) {
-    return {
-      descriptionKey: "invoices.reviewWaiting",
-      descriptionParams: { count: review },
-      primary: { href: `/invoices/${latestReviewId}`, labelKey: "invoices.openNext" },
-      secondary: [{ href: "/containers", labelKey: "invoices.backContainers" }],
-      variant: "warning",
-    };
-  }
+/** Nothing to review: no card. The upload form right under it is the next step, under its own title. */
+export function invoicesHubStep(review: number, latestReviewId?: string): WorkflowStep | null {
+  if (review === 0 || !latestReviewId) return null;
   return {
-    descriptionKey: "invoices.deposit",
-    primary: { href: "#depot", labelKey: "invoices.depositAction" },
+    descriptionKey: "invoices.reviewWaiting",
+    descriptionParams: { count: review },
+    primary: { href: `/invoices/${latestReviewId}`, labelKey: "invoices.openNext" },
     secondary: [{ href: "/containers", labelKey: "invoices.backContainers" }],
-    variant: "default",
+    variant: "warning",
   };
 }
 
@@ -210,10 +205,12 @@ export function reportsHubStep(
  * `next` is the invoice waiting for review that comes after this one in drop order, and how many
  * wait: a quarter dropped at once is reviewed one invoice after the other, without going back to the
  * list between two.
+ * `containers` are every container the confirmed lines landed on, each linked once: a freight invoice
+ * often covers a whole booking, and naming only the first left the others unreachable from the page.
  */
 export function invoiceDetailStep(
   status: string,
-  container?: { id: string; number: string },
+  containers: { id: string; number: string }[],
   next?: { id: string; waiting: number },
 ): WorkflowStep | null {
   const toNext = next ? { href: `/invoices/${next.id}`, labelKey: "invoiceDetail.nextReview" } : null;
@@ -226,29 +223,27 @@ export function invoiceDetailStep(
       variant: "warning",
     };
   }
+  const unitCosts = containers.map((c) => ({ href: `/container/${c.id}#couts-unitaires`, labelKey: "invoiceDetail.seeUnitCosts", labelParams: { container: c.number } }));
   if (status === "CONFIRMED" && toNext && next) {
     return {
       descriptionKey: "invoiceDetail.confirmedNext",
       descriptionParams: { count: next.waiting },
       primary: toNext,
-      secondary: container
-        ? [{ href: `/container/${container.id}#couts-unitaires`, labelKey: "invoiceDetail.seeUnitCosts", labelParams: { container: container.number } }]
-        : [],
+      secondary: unitCosts,
       variant: "success",
     };
   }
-  if (status === "CONFIRMED" && container) {
+  if (status === "CONFIRMED" && containers.length > 0) {
+    const [first, ...others] = unitCosts;
+    // One container: its sheet is offered next to its unit costs. Several: one link each, no more.
+    const sheet = containers.length === 1
+      ? [{ href: `/container/${containers[0].id}`, labelKey: "invoiceDetail.openContainer", labelParams: { container: containers[0].number } }]
+      : [];
     return {
       descriptionKey: "invoiceDetail.confirmed",
-      primary: {
-        href: `/container/${container.id}#couts-unitaires`,
-        labelKey: "invoiceDetail.seeUnitCosts",
-        labelParams: { container: container.number },
-      },
-      secondary: [
-        { href: `/container/${container.id}`, labelKey: "invoiceDetail.openContainer", labelParams: { container: container.number } },
-        { href: "/reports", labelKey: "container.viewReports" },
-      ],
+      descriptionParams: { count: containers.length },
+      primary: first,
+      secondary: [...others, ...sheet, { href: "/reports", labelKey: "container.viewReports" }],
       variant: "success",
     };
   }
@@ -343,13 +338,15 @@ export function importNewStep(resuming: boolean): WorkflowStep {
   };
 }
 
+const DONE_HREF: Partial<Record<ImportJobResponse["kind"], string>> = { PRODUCTS: "/imports", CONTAINERS: "/containers", COSTS: "/cost-audit" };
+
 /**
  * The next-step card for the import wizard itself, computed from the wizard's own client-side step
  * instead of the server-rendered "resuming or not" snapshot the page loaded with: the
  * card used to keep telling you to "choose a file" while you were already on the validation
  * report.
  */
-export function importWizardStep(step: "upload" | "mapping" | "review" | "done", resuming: boolean, hasErrors: boolean): WorkflowStep {
+export function importWizardStep(step: "upload" | "mapping" | "review" | "done", resuming: boolean, hasErrors: boolean, kind: ImportJobResponse["kind"] = "PURCHASE_ORDERS"): WorkflowStep {
   if (step === "mapping") {
     return {
       descriptionKey: "importNew.mapping",
@@ -361,16 +358,19 @@ export function importWizardStep(step: "upload" | "mapping" | "review" | "done",
   if (step === "review") {
     return {
       descriptionKey: hasErrors ? "importNew.reviewErrors" : "importNew.reviewOk",
-      primary: { href: "#wizard", labelKey: "importNew.reviewAction" },
+      primary: null,
       secondary: [],
       variant: hasErrors ? "warning" : "default",
     };
   }
   if (step === "done") {
+    // What to look at next depends on what the file was: a tariff, a tracking sheet and a costs
+    // ledger have nothing to do with "check your orders are in containers".
     return {
       descriptionKey: "importNew.done",
-      primary: { href: "/purchase-orders", labelKey: "importNew.doneAction" },
-      secondary: [{ href: "/containers", labelKey: "imports.goContainers" }],
+      descriptionParams: { kind },
+      primary: { href: DONE_HREF[kind] ?? "/purchase-orders", labelKey: "importNew.doneAction", labelParams: { kind } },
+      secondary: kind === "CONTAINERS" ? [] : [{ href: "/containers", labelKey: "imports.goContainers" }],
       variant: "success",
     };
   }

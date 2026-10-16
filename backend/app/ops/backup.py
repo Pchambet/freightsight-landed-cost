@@ -14,6 +14,7 @@ Three properties this has to have, and each one is a decision:
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import subprocess
@@ -24,6 +25,9 @@ from urllib.parse import urlparse
 
 import structlog
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from sqlalchemy import Connection, create_engine, text
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
 from app.adapters.s3 import S3Client
 
@@ -59,6 +63,7 @@ class BackupResult:
     sha256: str
     duration_seconds: float
     deleted: list[str]
+    taken_at: datetime
 
 
 def settings_from_env(env: dict[str, str] | None = None) -> dict[str, str]:
@@ -151,6 +156,52 @@ def restore(database_url: str, archive: bytes, pg_restore: str = "pg_restore") -
         raise BackupError(f"{pg_restore} is not on the PATH") from exc
     if completed.returncode != 0:
         raise BackupError(f"pg_restore failed: {completed.stderr.decode()[:2000]}")
+    grant_application_role(database_url)
+
+
+#: The role the API and the worker connect as, which owns nothing (migration 0003).
+APP_ROLE = "freightsight_app"
+
+#: What the migrations grant, replayed on a restored copy. Dumps carry no privileges — they must
+#: restore into a database whose roles are not the source's — so without this the copy is readable
+#: by its owner alone, the API answers "permission denied" on every table, and the SECURITY DEFINER
+#: door through row-level security (`tracking_resolve_subscription`) comes back open to PUBLIC.
+#: `tests/test_backup.py` compares the result with a migrated database, privilege by privilege.
+APP_GRANTS = f"""
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{APP_ROLE}') THEN
+        CREATE ROLE {APP_ROLE} NOLOGIN;
+    END IF;
+END $$;
+GRANT USAGE ON SCHEMA public TO {APP_ROLE};
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {APP_ROLE};
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {APP_ROLE};
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO {APP_ROLE};
+REVOKE UPDATE, DELETE, TRUNCATE ON audit_log FROM {APP_ROLE};
+REVOKE ALL ON FUNCTION tracking_resolve_subscription(TEXT, TEXT, TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION tracking_resolve_subscription(TEXT, TEXT, TEXT) TO {APP_ROLE};
+DO $$
+DECLARE fn regprocedure;
+BEGIN
+    FOR fn IN
+        SELECT p.oid::regprocedure FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+        WHERE n.nspname = 'public' AND p.proname LIKE 'procrastinate%'
+    LOOP
+        EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO {APP_ROLE}', fn);
+    END LOOP;
+END $$;
+"""
+
+
+def grant_application_role(database_url: str) -> None:
+    """Give the application role back what the migrations gave it, in one transaction."""
+    import psycopg
+
+    try:
+        with psycopg.connect(libpq_url(database_url)) as connection:
+            connection.execute(APP_GRANTS)
+    except psycopg.Error as exc:
+        raise BackupError(f"restored, but granting {APP_ROLE} failed: {exc}") from exc
 
 
 def object_key(env: str, moment: datetime) -> str:
@@ -209,7 +260,8 @@ def run(env: dict[str, str] | None = None, *, client: S3Client | None = None) ->
         config["secret_key"],
         config["endpoint"],
     )
-    key = object_key(config["env"], datetime.now(UTC))
+    taken_at = datetime.now(UTC)
+    key = object_key(config["env"], taken_at)
     s3.put(key, encrypted, "application/octet-stream")
 
     existing = [obj.key for obj in s3.list(f"{KEY_PREFIX}/{config['env']}/")]
@@ -223,6 +275,7 @@ def run(env: dict[str, str] | None = None, *, client: S3Client | None = None) ->
         sha256=digest,
         duration_seconds=round(time.monotonic() - started, 2),
         deleted=deleted,
+        taken_at=taken_at,
     )
     # Structured fields rather than a JSON string in the message: the renderer puts them at the top
     # level of the line, where a log search can filter on `size_bytes` instead of matching text.
@@ -236,6 +289,42 @@ def run(env: dict[str, str] | None = None, *, client: S3Client | None = None) ->
         kept=len(existing) + 1 - len(result.deleted),
     )
     return result
+
+
+#: The `job_runs` row a successful backup leaves behind. The worker's freshness check reads it: the
+#: worker holds no storage credentials, and it is the one process that runs every day and reports.
+RUN_NAME = "ops.backup"
+
+
+def note_success(db: Session | Connection, result: BackupResult) -> None:
+    """Write down that a backup reached the bucket, with its size and the size of the one before it,
+    so that a dump that suddenly holds a third less can be noticed without opening the bucket."""
+    previous = db.scalar(text("SELECT detail FROM job_runs WHERE name = :name"), {"name": RUN_NAME})
+    try:
+        previous_bytes = json.loads(previous)["size_bytes"] if previous else None
+    except (ValueError, KeyError, TypeError):
+        previous_bytes = None  # a row written by hand or by an older version: no comparison tonight
+    detail = {"key": result.key, "size_bytes": result.size_bytes, "previous_bytes": previous_bytes}
+    db.execute(
+        text(
+            "INSERT INTO job_runs (name, last_run_at, failures, detail) VALUES (:name, :at, 0, :detail) "
+            "ON CONFLICT (name) DO UPDATE SET last_run_at = EXCLUDED.last_run_at, failures = 0, "
+            "detail = EXCLUDED.detail"
+        ),
+        {"name": RUN_NAME, "at": result.taken_at, "detail": json.dumps(detail)},
+    )
+
+
+def record_success(database_url: str, result: BackupResult) -> None:
+    """`note_success` in the database that was just dumped, as its owner."""
+    engine = create_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            note_success(connection, result)
+    except SQLAlchemyError as exc:
+        raise BackupError(f"{result.key} was written but could not be recorded: {exc}") from exc
+    finally:
+        engine.dispose()
 
 
 def fetch(key: str, env: dict[str, str] | None = None, *, client: S3Client | None = None) -> bytes:

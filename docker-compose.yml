@@ -1,5 +1,8 @@
 services:
   db:
+    # The major CI and production run. The 18 images keep their data in /var/lib/postgresql/18/docker
+    # and want the volume one level up. A `pgdata` volume made by the old postgres:17 service will not
+    # open: dump it first, or drop it with `docker compose down -v` (the ops runbook has both).
     image: postgres:18
     environment:
       POSTGRES_USER: fs
@@ -8,7 +11,6 @@ services:
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
-      # Postgres 18 images keep PGDATA in /var/lib/postgresql/18/docker and refuse a mount at .../data.
       - pgdata:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U fs"]
@@ -47,6 +49,8 @@ services:
       CLERK_AUTHORIZED_PARTIES: ${CLERK_AUTHORIZED_PARTIES:-[]}
     volumes:
       - ./backend:/app
+    # On this machine only: with ALLOW_DEV_PRINCIPAL an X-Org-Id header is a login, so the port is
+    # not published to the network the laptop happens to be on.
     ports:
       - "127.0.0.1:8001:8000"
     depends_on:

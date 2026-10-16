@@ -208,12 +208,23 @@ def test_a_sage_export_is_read_whole_title_block_totals_row_and_french_decimals(
     warnings = {w["code"]: w for w in report["warnings"]}
     assert warnings["HEADER_ROW_DETECTED"]["params"] == {"line": 3}
     assert "TOTALS_ROW_IGNORED" in warnings
+    # « Poids (kg) » may be one tyre or the whole line: left for a person to say, and said so
+    unmapped = [(w["field"], w["params"]) for w in report["warnings"] if w["code"] == "UNIT_COLUMN_UNMAPPED"]
+    assert unmapped == [
+        ("unit_weight_kg", {"column": "Poids (kg)"}),
+        ("unit_volume_cbm", {"column": "Volume (m3)"}),
+    ]
+
+    # the person says per unit
+    report = validate(client, job, unit_weight_kg="Poids (kg)", unit_volume_cbm="Volume (m3)")
+    warnings = {w["code"]: w for w in report["warnings"]}
     assert warnings["DECIMAL_COMMA_ASSUMED"]["params"] == {
         "column": "Poids (kg)",
         "example": "7,250",
         "comma": "decimal",
     }
     assert warnings["UNIT_COLUMN_AMBIGUOUS"]["field"] in ("unit_weight_kg", "unit_volume_cbm")
+    assert "UNIT_COLUMN_UNMAPPED" not in warnings
 
     res = client.post(f"/api/v1/imports/{job['id']}/commit", json={"on_error": "abort"})
     assert res.status_code == 200, res.text
@@ -280,6 +291,61 @@ def test_the_same_sku_twice_on_one_order_keeps_both_quantities(client: TestClien
     assert len(client.get(f"/api/v1/purchase-orders/{po['id']}").json()["lines"]) == 2
 
 
+def test_the_same_line_said_twice_without_another_container_is_flagged(client: TestClient) -> None:
+    """Two identical rows without line_no read as one line repeated for a second container; with no
+    container, or the same one, that left 1 000 € of FOB out of the order without a word."""
+    content = b"po_number;sku;quantity;unit_price\nPO-E;A;100;10,00\nPO-E;A;100;10,00\n"
+    report = validate(client, upload(client, content, "PURCHASE_ORDERS", "same.csv"))
+    assert report["lines_created"] == 1
+    (warning,) = [w for w in report["warnings"] if w["code"] == "DUPLICATE_SKU_SAME_VALUES"]
+    assert warning["row"] == 3 and warning["params"] == {"po_number": "PO-E", "sku": "A", "line_no": 1}
+
+    same_box = (
+        b"po_number;sku;quantity;unit_price;container_number\n"
+        b"PO-F;A;100;10,00;MSCU1234567\nPO-F;A;100;10,00;MSCU1234567\n"
+    )
+    report = validate(client, upload(client, same_box, "PURCHASE_ORDERS", "same_box.csv"))
+    assert "DUPLICATE_SKU_SAME_VALUES" in codes(report["warnings"])
+
+    # the shape it was meant for: one order line repeated once per container
+    per_box = (
+        b"po_number;sku;quantity;unit_price;container_number;container_quantity\n"
+        b"PO-G;A;100;10,00;MSCU1234567;60\nPO-G;A;100;10,00;CMAU9876543;40\n"
+    )
+    report = validate(client, upload(client, per_box, "PURCHASE_ORDERS", "per_box.csv"))
+    assert report["lines_created"] == 1 and report["loads_created"] == 2
+    assert "DUPLICATE_SKU_SAME_VALUES" not in codes(report["warnings"])
+
+
+def test_a_line_total_weight_or_volume_is_divided_by_the_line_quantity(client: TestClient) -> None:
+    """Two lines of 50 kg each, 100 and 10 pieces: read as unit weights, a 3 000 € freight split by
+    weight went 2 727,27 / 272,73 instead of 1 500 / 1 500. Mapped as the line's total, it is one
+    piece's weight that is stored."""
+    content = (
+        b"po_number;sku;quantity;unit_price;Poids total (kg);Volume total (m3)\n"
+        b"PO-T;A;100;10,00;50;1,2\nPO-T;B;10;10,00;50;0,3\nPO-T;C;3;10,00;50;\n"
+    )
+    job = upload(client, content, "PURCHASE_ORDERS", "totals.csv")
+    assert job["mapping"]["line_weight_kg"] == "Poids total (kg)"
+    assert job["mapping"]["line_volume_cbm"] == "Volume total (m3)"
+    res = client.post(
+        f"/api/v1/imports/{job['id']}/commit", json={"mapping": job["mapping"], "on_error": "abort"}
+    )
+    assert res.status_code == 200, res.text
+    (po,) = [p for p in client.get("/api/v1/purchase-orders").json() if p["po_number"] == "PO-T"]
+    lines = {ln["sku"]: ln for ln in client.get(f"/api/v1/purchase-orders/{po['id']}").json()["lines"]}
+    assert (lines["A"]["unit_weight_kg"], lines["A"]["unit_volume_cbm"]) == ("0.5000", "0.0120")
+    assert (lines["B"]["unit_weight_kg"], lines["B"]["unit_volume_cbm"]) == ("5.0000", "0.0300")
+    assert (lines["C"]["unit_weight_kg"], lines["C"]["unit_volume_cbm"]) == ("16.6667", None)
+
+    # one dimension is said once: per unit or for the line, not both
+    again = upload(client, content, "PURCHASE_ORDERS", "totals.csv")
+    both = {**again["mapping"], "unit_weight_kg": "Poids total (kg)"}
+    res = client.post(f"/api/v1/imports/{again['id']}/validate", json={"mapping": both})
+    assert res.status_code == 422 and res.json()["code"] == "MAPPING_UNIT_AND_LINE_TOTAL"
+    assert res.json()["dimension"] == "weight"
+
+
 def test_a_currency_that_changes_inside_one_order_is_refused(client: TestClient) -> None:
     content = b"po_number;currency;sku;quantity;unit_price\nPO-X;USD;A;10;1,00\nPO-X;CNY;B;20;2,00\n"
     job = upload(client, content, "PURCHASE_ORDERS")
@@ -306,7 +372,7 @@ def test_a_foreign_order_says_which_rate_of_which_date_and_from_where(client: Te
     counted as 40 000 EUR, every share by value skewed with it. The import now applies the ECB rate
     of the order date, as the purchase-order screen does, and says so."""
     job = upload(client, (IMPORTS_FIXTURES / "ebp_commandes.csv").read_bytes(), "PURCHASE_ORDERS", "ebp.csv")
-    assert job["mapping"]["po_number"] == "N° cde" and job["mapping"]["unit_weight_kg"] == "Poids net"
+    assert job["mapping"]["po_number"] == "N° cde" and "unit_weight_kg" not in job["mapping"]
     report = validate(client, job)
     assert report["valid_rows"] == 3
     assert not [w for w in report["warnings"] if w["code"] == "FX_RATE_DEFAULTED"]
@@ -316,13 +382,48 @@ def test_a_foreign_order_says_which_rate_of_which_date_and_from_where(client: Te
     assert fx["params"]["source"].startswith("ecb") and len(fx["params"]["rate_date"]) == 10
 
 
-def test_a_currency_nobody_quotes_falls_back_to_one_and_says_so(client: TestClient) -> None:
-    content = b"po_number;currency;order_date;sku;quantity;unit_price\nPO-XTS;XTS;2026-09-10;A;10;100,00\n"
+def test_an_order_no_rate_is_known_for_keeps_its_rate_missing_and_its_figures_say_so(
+    client: TestClient,
+) -> None:
+    """When no rate could be had — the ECB down, a currency it does not quote — the order was written
+    at 1:1 for good, its dollars read as euros in every landed cost after it. Its rate stays missing
+    now: the order says so, a cost split by value on its box refuses to guess, and its lines say why
+    their value is not counted."""
+    content = (
+        b"po_number;currency;order_date;sku;quantity;unit_price;container_number\n"
+        b"PO-XTS;XTS;2026-09-10;A;10;100,00;MSCU1234567\n"
+        b"PO-EUR;EUR;2026-09-10;B;10;100,00;MSCU1234567\n"
+    )
     job = upload(client, content, "PURCHASE_ORDERS")
     report = validate(client, job)
-    fx = next(w for w in report["warnings"] if w["code"] == "FX_RATE_DEFAULTED")
-    assert fx["params"]["rate"] == "1" and fx["params"]["source"] == "DEFAULT"
-    assert fx["params"]["rate_date"] == "2026-09-10"
+    assert "FX_RATE_DEFAULTED" not in codes(report["warnings"])
+    (fx,) = [w for w in report["warnings"] if w["code"] == "FX_RATE_MISSING"]
+    assert fx["params"] == {"currency": "XTS", "base_currency": "EUR", "rate_date": "2026-09-10"}
+    res = client.post(f"/api/v1/imports/{job['id']}/commit", json={"on_error": "abort"})
+    assert res.status_code == 200, res.text
+
+    pos = {p["po_number"]: p for p in client.get("/api/v1/purchase-orders").json()}
+    assert pos["PO-XTS"]["fob_base"] is None and pos["PO-EUR"]["fob_base"] == "1000.00"
+    assert client.get(f"/api/v1/purchase-orders/{pos['PO-XTS']['id']}").json()["fx_rate"] is None
+
+    (box,) = client.get("/api/v1/containers").json()
+    body = {"scope": "CONTAINER", "target_id": box["id"], "cost_type": "DRAYAGE", "amount": "300.00",
+            "currency": "EUR", "cost_date": "2026-09-12", "allocation_method": "BY_VALUE"}  # fmt: skip
+    assert client.post("/api/v1/costs", json=body).status_code == 201
+    landed = client.get(f"/api/v1/landed-costs/containers/{box['id']}").json()
+    assert {ln["po_number"]: ln["fob_missing"] for ln in landed["lines"]} == {
+        "PO-XTS": "FX_RATE_MISSING",
+        "PO-EUR": None,
+    }
+    # never 1:1, nor the other order's value passed off as the box's
+    assert landed["totals"]["fob"] is None and landed["fob_missing_lines"] == 1
+    assert [(w["code"], w["amount_base"]) for w in landed["warnings"]] == [("MISSING_FX_RATE", "300.00")]
+
+    # the rate a person sets on the order is the one every figure then uses
+    patched = client.patch(f"/api/v1/purchase-orders/{pos['PO-XTS']['id']}", json={"fx_rate": "0.5"})
+    assert patched.status_code == 200, patched.text
+    landed = client.get(f"/api/v1/landed-costs/containers/{box['id']}").json()
+    assert landed["totals"]["fob"] == "1500.00" and landed["warnings"] == []
 
 
 def test_an_erp_sync_is_labelled_as_a_sync_not_as_a_dropped_file(
@@ -374,3 +475,35 @@ def test_an_order_file_s_rate_with_its_per_cent_sign_is_a_per_cent(client: TestC
         "A": Decimal("0.01"),  # « 1 % » — not a whole: a hundred per cent of duty on an article
         "B": Decimal("0.045"),
     }
+
+
+def test_a_file_that_is_not_a_workbook_answers_a_code_not_a_500(client: TestClient) -> None:
+    """An old .xls renamed .xlsx — common with SME users — raised BadZipFile straight into a 500."""
+    res = client.post(
+        "/api/v1/imports",
+        data={"kind": "PURCHASE_ORDERS"},
+        files={"file": ("ledger.xlsx", b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 512, "text/csv")},
+    )
+    assert res.status_code == 422 and res.json()["code"] == "XLSX_UNREADABLE"
+
+
+def test_a_file_over_a_cap_is_refused_with_the_cap(client: TestClient, monkeypatch: Any) -> None:
+    from app.domain.imports import parsing
+
+    monkeypatch.setattr(parsing, "MAX_ROWS", 2)
+    res = client.post(
+        "/api/v1/imports",
+        data={"kind": "PURCHASE_ORDERS"},
+        files={"file": ("big.csv", b"po_number;sku\nPO-1;A\nPO-2;B\n", "text/csv")},
+    )
+    assert res.status_code == 422
+    assert res.json()["code"] == "TOO_MANY_ROWS" and res.json()["limit"] == 2
+
+
+def test_an_upload_is_parsed_off_the_event_loop() -> None:
+    """Parsing a large file inside an `async def` route blocked the one event loop for every tenant."""
+    import inspect
+
+    from app.api.v1.imports import create_import
+
+    assert not inspect.iscoroutinefunction(create_import)

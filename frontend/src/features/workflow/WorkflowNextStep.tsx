@@ -11,7 +11,7 @@ export default async function WorkflowNextStep({ step }: { step: WorkflowStep })
       title={t("nextStep")}
       description={label(step.descriptionKey, step.descriptionParams)}
       variant={step.variant}
-      primary={{ href: step.primary.href, label: label(step.primary.labelKey, step.primary.labelParams) }}
+      primary={step.primary && { href: step.primary.href, label: label(step.primary.labelKey, step.primary.labelParams) }}
       secondary={step.secondary.map((s) => ({ href: s.href, label: label(s.labelKey, s.labelParams) }))}
     />
   );

@@ -5,14 +5,15 @@ import Link from "next/link";
 import { AlertTriangle, FileText, Info } from "lucide-react";
 import { PageHeader, btnSecondary, td, tdRight, th, thRight } from "@/components/layout/AppShell";
 import Breadcrumb from "@/components/shared/Breadcrumb";
-import MetricLabel from "@/components/shared/MetricLabel";
 import CollapsibleSection from "@/components/shared/CollapsibleSection";
-import { Money } from "@/components/shared/Money";
 import ScrollRegion from "@/components/shared/ScrollRegion";
 import AddCostForm from "@/features/costs/AddCostForm";
 import AllocationPanel from "@/features/costs/AllocationPanel";
 import CostBreakdown from "@/features/costs/CostBreakdown";
+import ReportTotals from "@/features/costs/ReportTotals";
 import EstimatePanel from "@/features/estimates/EstimatePanel";
+import RateForm from "@/features/purchase-orders/RateForm";
+import FobMissing from "@/features/report/FobMissing";
 import CostLedger from "@/features/costs/CostLedger";
 import OpenOnHash from "@/components/shared/OpenOnHash";
 import WorkflowNextStep from "@/features/workflow/WorkflowNextStep";
@@ -23,6 +24,7 @@ import { dateShort, pct, qty } from "@/lib/format";
 type Params = { params: Promise<{ id: string }> };
 
 const API_ERROR = "api_error";
+const TOTALS = ["fob", "allocated", "vat", "landed"] as const;
 
 // `LandedCostReport.notes` — see the same type in the container page for why it is typed locally.
 type ReportNote = { cost_id: string; code: string; message: string; load_ids: string[]; load_labels: string[] };
@@ -31,10 +33,11 @@ async function load(id: string) {
   const po = await api.GET("/api/v1/purchase-orders/{po_id}", { params: { path: { po_id: id } } });
   if (po.response.status === 404 || po.response.status === 422) return null;
   if (po.error || !po.data) throw new Error(API_ERROR);
-  const [rep, summaries, containers] = await Promise.all([
+  const [rep, summaries, containers, me] = await Promise.all([
     api.GET("/api/v1/landed-costs/purchase-orders/{po_id}", { params: { path: { po_id: id } } }),
     api.GET("/api/v1/purchase-orders"),
     api.GET("/api/v1/containers"),
+    api.GET("/api/v1/me"),
   ]);
   if (rep.error || !rep.data) throw new Error(API_ERROR);
   const summary = summaries.data?.find((p) => p.id === id);
@@ -47,6 +50,8 @@ async function load(id: string) {
   return {
     po: po.data,
     report: rep.data,
+    // Read-only members see the rate, not the form; the API refuses them either way.
+    canEdit: me.data?.role !== "VIEWER",
     firstContainer: firstContainer ? { id: firstContainer.id, number: firstContainer.container_number } : undefined,
   };
 }
@@ -62,12 +67,11 @@ export default async function PurchaseOrderPage({ params }: Params) {
   const { id } = await params;
   const data = await load(id);
   if (!data) notFound();
-  const { po, report, firstContainer } = data;
-  const [t, tc, errorCode, tg, ts, locale] = await Promise.all([
+  const { po, report, firstContainer, canEdit } = data;
+  const [t, tc, errorCode, ts, locale] = await Promise.all([
     getTranslations("purchaseOrder"),
     getTranslations("common"),
     getTranslations("errors"),
-    getTranslations("glossary"),
     getTranslations("sheet"),
     getLocale(),
   ]);
@@ -81,9 +85,13 @@ export default async function PurchaseOrderPage({ params }: Params) {
       <Breadcrumb backHref="/purchase-orders" backLabel={t("breadcrumb")} />
       <PageHeader
         title={po.po_number}
-        subtitle={<span>{po.supplier_name ?? t("noSupplier")} · {po.currency}{po.currency !== cur ? ` @ ${po.fx_rate} ${cur}` : ""}{po.order_date ? ` · ${t("ordered", { date: dateShort(po.order_date, locale) })}` : ""}{po.incoterm ? ` · ${po.incoterm}` : ""}</span>}
+        subtitle={<span>{po.supplier_name ?? t("noSupplier")} · {po.currency}{po.currency !== cur ? (po.fx_rate ? ` @ ${po.fx_rate} ${cur}` : ` · ${t("noRate", { currency: po.currency, base: cur })}`) : ""}{po.order_date ? ` · ${t("ordered", { date: dateShort(po.order_date, locale) })}` : ""}{po.incoterm ? ` · ${po.incoterm}` : ""}</span>}
         actions={report.lines.length > 0 ? <Link href={`/purchase-orders/${po.id}/report`} className={btnSecondary}><FileText className="w-4 h-4 mr-1.5" aria-hidden />{ts("actions.open")}</Link> : null}
       />
+
+      {po.currency !== cur ? (
+        <RateForm poId={po.id} currency={po.currency} base={cur} current={po.fx_rate} rateDate={po.fx_date} needsDate={!po.fx_date && !po.order_date} canEdit={canEdit} />
+      ) : null}
 
       <WorkflowNextStep step={step} />
 
@@ -118,14 +126,9 @@ export default async function PurchaseOrderPage({ params }: Params) {
         </div>
       ) : null}
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
-        {(["fob", "allocated", "vat", "landed"] as const).map((k) => (
-          <div key={k} className="bg-white rounded-lg border border-slate-200 px-4 py-3">
-            <MetricLabel label={t(`totals.${k}`)} hint={tg(k)} />
-            <div className="text-lg font-semibold tabular-nums mt-1"><Money amount={report.totals[k]} currency={cur} /></div>
-          </div>
-        ))}
-      </div>
+      <FobMissing lines={report.fob_missing_lines} href="#taux" className="mb-6" />
+
+      <ReportTotals report={report} keys={TOTALS} labels={Object.fromEntries(TOTALS.map((k) => [k, t(`totals.${k}`)])) as Record<(typeof TOTALS)[number], string>} />
 
       <div className="space-y-6 mb-6">
         <CostBreakdown report={report} />

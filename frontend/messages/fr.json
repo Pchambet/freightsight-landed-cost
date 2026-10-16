@@ -276,7 +276,9 @@
     "fobUnit": "FOB unitaire",
     "landedUnit": "Coût rendu unitaire",
     "quantity": "{qty} chargées",
-    "skuHistory": "Voir l'historique du coût unitaire de cette référence"
+    "skuHistory": "Voir l'historique du coût unitaire de cette référence",
+    "noCharge": "aucun frais encore ventilé",
+    "partlyEstimated": "en partie estimé"
   },
   "allocation": {
     "title": "Coût rendu par ligne de commande",
@@ -357,6 +359,24 @@
       "title": "Commande introuvable",
       "body": "Elle appartient peut-être à une autre société, ou elle a été supprimée.",
       "back": "Retour aux commandes"
+    },
+    "noRate": "taux {currency}→{base} manquant : valeur inconnue",
+    "rate": {
+      "title": "Taux de change",
+      "hint": "Un seul taux pour toute la commande. Saisissez celui de votre banque ou de la déclaration en douane : il remplace le taux BCE, et tous les coûts de revient de la commande sont recalculés.",
+      "missing": "Aucun taux connu pour le {currency} : la valeur de cette commande est inconnue, ses coûts de revient ne sont pas calculés. Saisissez le taux ci-dessous.",
+      "current": "1 {currency} = {rate} {base}",
+      "dated": "taux du {date}",
+      "label": "Valeur de 1 {currency} en {base}",
+      "date": "Date du taux (facultative)",
+      "dateHint": "La date est facultative : la commande n'en a pas, indiquez le jour auquel ce taux correspond si vous le connaissez.",
+      "save": "Enregistrer le taux",
+      "saving": "Enregistrement…",
+      "saved": "Taux enregistré : les coûts de revient de la commande sont recalculés.",
+      "invalid": "Saisissez un taux supérieur à zéro, par exemple 0,9215.",
+      "failed": "Le taux n'a pas pu être enregistré.",
+      "change": "Modifier le taux",
+      "cancel": "Annuler"
     }
   },
   "imports": {
@@ -723,6 +743,9 @@
     "chooseOrganization": {
       "title": "Choisissez votre société",
       "body": "Chaque commande, conteneur et coût appartient à une seule société."
+    },
+    "signUp": {
+      "privacy": "En créant un compte, vos données sont traitées comme le décrit notre <link>politique de confidentialité</link>."
     }
   },
   "domain": {
@@ -872,7 +895,8 @@
       "import_committed": "Import validé",
       "import_undone": "Import annulé",
       "cost_closed": "Estimé clos sans facture",
-      "cost_superseded": "Estimé remplacé par le réel"
+      "cost_superseded": "Estimé remplacé par le réel",
+      "purchase_order_updated": "Commande modifiée"
     },
     "finding": {
       "DUPLICATE_CHARGE": "Prestation facturée deux fois",
@@ -924,6 +948,12 @@
     "FILE_TOO_LARGE": "Le fichier est trop volumineux.",
     "XLSX_UNSUPPORTED": "Ce fichier Excel n'est pas exploitable.",
     "ENCODING_UNKNOWN": "L'encodage du fichier n'a pas pu être déterminé.",
+    "XLSX_UNREADABLE": "Ce fichier n'est pas un classeur Excel lisible (.xlsx). Un ancien .xls renommé, ou un CSV enregistré sous ce nom ? Ouvrez-le dans Excel et enregistrez-le en .xlsx ou en CSV.",
+    "XLSX_TOO_LARGE": "Ce classeur dépasse {limit, number} Mo une fois décompressé. Enregistrez la seule feuille à importer en CSV.",
+    "CSV_UNREADABLE": "Ce fichier ne se lit pas comme un CSV : une cellule est anormalement longue ou contient des caractères de contrôle. Réenregistrez-le depuis votre tableur.",
+    "TOO_MANY_ROWS": "Le fichier dépasse {limit, number} lignes. Découpez-le, par exemple par trimestre, et importez les morceaux l'un après l'autre.",
+    "TOO_MANY_COLUMNS": "Le fichier dépasse {limit, number} colonnes. Une valeur égarée loin à droite du tableau suffit : supprimez les colonnes inutiles et réessayez.",
+    "TOO_MANY_CELLS": "Le fichier dépasse {limit, number} cellules. Gardez seulement les colonnes utiles, ou découpez-le en plusieurs fichiers.",
     "MAPPING_INCOMPLETE": "Des colonnes obligatoires ne sont pas renseignées.",
     "MAPPING_UNKNOWN_COLUMN": "Une colonne indiquée n'existe pas dans le fichier.",
     "NO_VALID_ROWS": "Aucune ligne valide à importer.",
@@ -940,6 +970,8 @@
     "DEPRECATED_COLUMN": "La colonne « {column} » (pourcentage de répartition) est ignorée : la répartition suit la méthode par défaut de l'organisation.",
     "FX_RATE_APPLIED": "Commande en {currency} : taux {rate} ({currency}→{base_currency}) appliqué, {source, select, ecb {taux BCE du {rate_date}} other {dernier taux BCE publié, celui du {rate_date}}}. Vous pouvez le remplacer sur la commande par le taux de votre banque.",
     "FX_RATE_DEFAULTED": "Commande en {currency} : aucun taux de change connu au {rate_date}, le taux {rate} ({currency}→{base_currency}, source : taux par défaut) a été appliqué. Corrigez-le sur la commande.",
+    "FX_RATE_MISSING": "Commande en {currency} : aucun taux de change {currency}→{base_currency} connu au {rate_date}. Sa valeur reste manquante — jamais lue à 1 pour 1 — tant qu'un taux n'est pas saisi sur la commande ; les frais ventilés à la valeur sur ses conteneurs restent non répartis d'ici là.",
+    "MISSING_FX_RATE": "Taux de change manquant sur une commande : sa valeur en devise de base est inconnue, ce frais ne peut pas être réparti à la valeur. Saisissez le taux sur la commande, ou choisissez une autre méthode.",
     "NOT_AN_ACTUAL": "Seul un coût réel peut remplacer un estimé.",
     "SELF_SUPERSEDE": "Un coût ne peut pas se remplacer lui-même.",
     "NOT_AN_ESTIMATE": "Le coût visé n'est pas un estimé.",
@@ -973,9 +1005,13 @@
     "HEADER_ROW_DETECTED": "Les noms de colonnes ont été lus à la ligne {line} du fichier ; les lignes au-dessus ont été ignorées.",
     "TOTALS_ROW_IGNORED": "La dernière ligne du fichier est une ligne de totaux : elle n'a pas été importée.",
     "DECIMAL_COMMA_ASSUMED": "Dans la colonne « {column} », la virgule de « {example} » peut se lire de deux façons ; elle a été lue comme {comma, select, thousands {un séparateur de milliers (1,250 = 1 250)} other {une virgule décimale (1,250 = 1,25)}}. Si ce n'est pas le cas, corrigez le fichier avant de valider.",
-    "UNIT_COLUMN_AMBIGUOUS": "La colonne « {column} » ne précise pas s'il s'agit d'une valeur par unité ou pour la ligne entière : elle est lue comme une valeur unitaire. Si c'est un total de ligne, divisez-la par la quantité avant l'import.",
+    "UNIT_COLUMN_AMBIGUOUS": "La colonne « {column} » ne précise pas s'il s'agit d'une valeur par unité ou pour la ligne entière : elle est lue comme une valeur unitaire. Si c'est le total de la ligne, choisissez-la plutôt dans le champ du total de la ligne : elle sera divisée par la quantité.",
+    "UNIT_COLUMN_UNMAPPED": "La colonne « {column} » n'a pas été lue : elle ne dit pas si elle porte la valeur d'une unité ou le total de la ligne. Choisissez-la dans « {field} » si c'est la valeur d'une unité, ou dans le champ du total de la ligne (divisé par la quantité). Sans elle, les frais ventilés au poids ou au volume n'ont pas de base.",
+    "MAPPING_UNIT_AND_LINE_TOTAL": "{dimension, select, volume {Volume} other {Poids}} : choisissez la colonne par unité ou celle du total de la ligne, pas les deux.",
     "PO_NUMBER_FORWARD_FILLED": "{rows, plural, one {# ligne sans numéro de commande a été rattachée à la commande indiquée au-dessus (colonne « {column} »).} other {# lignes sans numéro de commande ont été rattachées à la commande indiquée au-dessus (colonne « {column} »).}}",
     "DUPLICATE_SKU_NEW_LINE": "L'article {sku} apparaît une seconde fois sur la commande {po_number} avec une quantité ou un prix différents : il a été importé comme ligne {line_no} distincte.",
+    "DUPLICATE_SKU_SAME_VALUES": "L'article {sku} apparaît de nouveau sur la commande {po_number} avec la même quantité, le même prix et sans autre conteneur : la ligne {line_no} n'a été comptée qu'une fois. S'il s'agit de deux lignes, numérotez-les (colonne N° ligne) ou additionnez leurs quantités.",
+    "CURRENCY_ASSUMED": "{rows, plural, one {Un montant ne dit pas} other {# montants ne disent pas}} dans quelle devise {rows, plural, one {il est} other {ils sont}} (ni colonne Devise, ni symbole, ni devise dans l'en-tête) : {rows, plural, one {il est lu} other {ils sont lus}} en {currency}. Si le relevé est dans une autre devise, ajoutez une colonne Devise et rapprochez-la.",
     "page": {
       "title": "Une erreur est survenue",
       "body": "Quelque chose s'est mal passé. Réessayez ou retournez à l'accueil.",
@@ -1014,6 +1050,9 @@
     "recordedInvoiceEstimate": "Un estimé porte déjà ce numéro de facture ({items}) : modifiez ou supprimez cet estimé avant de confirmer.",
     "recordedLineEstimate": "Un estimé porte déjà ce numéro de facture pour ce coût ({items}) : modifiez ou supprimez cet estimé plutôt que d'enregistrer un second coût.",
     "INVOICE_BUSY": "Cette facture est en cours de lecture ou de modification : réessayez dans un instant.",
+    "INVOICE_LINES_REFUSED": "Aucune ligne n'a été modifiée : {count, plural, one {# ligne ne peut pas l'être} other {# lignes ne peuvent pas l'être}} sur cette facture. Rechargez la page, puis recommencez.",
+    "INVOICE_LINE_NOT_FOUND": "Cette ligne n'est plus sur la facture.",
+    "INVOICE_LINE_REPEATED": "Cette ligne est demandée deux fois.",
     "IMPORT_ALREADY_UNDONE": "Cet import est déjà annulé.",
     "IMPORT_NOT_UNDOABLE": "Seul un import de frais validé, déposé à la main, peut être annulé.",
     "FILE_ALREADY_IMPORTED": "Ce fichier a déjà été importé : le réimporter compterait chaque frais deux fois.",
@@ -1021,7 +1060,8 @@
     "PREVIEW_REQUIRED": "Faites d'abord l'aperçu de ce fichier.",
     "IMPORT_KIND_NOT_READY": "Ce type de fichier ne s'importe pas encore.",
     "DATE_IN_FUTURE": "« {value} » est une date à venir.",
-    "AMOUNT_INCLUDES_VAT": "La colonne « {column} » est toutes taxes comprises : un coût de revient se lit hors taxes. Faites correspondre la colonne du montant HT."
+    "AMOUNT_INCLUDES_VAT": "La colonne « {column} » est toutes taxes comprises : un coût de revient se lit hors taxes. Faites correspondre la colonne du montant HT.",
+    "PERIOD_ORDERS_WITHOUT_FX_RATE": "Ce mois ne peut pas être clôturé : des commandes n'ont pas de taux de change ({orders}). La valeur de leurs marchandises est inconnue, et la clôture figerait un coût de revient faux. Saisissez le taux sur chacune, puis clôturez."
   },
   "timeline": {
     "title": "Chronologie",
@@ -1153,7 +1193,6 @@
       "file": "Fichier"
     },
     "empty": "Aucune facture pour l'instant.",
-    "emptyAction": "Déposer une facture",
     "filter": {
       "all": "Toutes",
       "review": "À relire",
@@ -1169,9 +1208,9 @@
       "failedTitle": "Lecture impossible",
       "retry": "Relancer la lecture",
       "reject": "Rejeter",
-      "confirm": "Confirmer {count} lignes",
+      "confirm": "{count, plural, one {Confirmer la ligne} other {Confirmer les # lignes}}",
       "confirmNone": "Acceptez au moins une ligne",
-      "confirmed": "{count} coûts créés",
+      "confirmed": "{count, plural, =0 {Aucun coût créé} one {# coût créé} other {# coûts créés}}",
       "rejected": "Facture rejetée",
       "retried": "Lecture relancée",
       "failed": "Action impossible",
@@ -1209,7 +1248,7 @@
       "addLineAdded": "Ligne ajoutée",
       "addLineFailed": "Impossible d'ajouter la ligne",
       "cancel": "Annuler",
-      "progress": "{ready} sur {accepted} lignes retenues sont prêtes · {incomplete, plural, one {# à compléter} other {# à compléter}}",
+      "progress": "{ready} sur {accepted, plural, one {# ligne retenue est prête} other {# lignes retenues sont prêtes}} · {incomplete, plural, one {# à compléter} other {# à compléter}}",
       "progressReady": "{count, plural, one {La ligne retenue est prête à devenir un coût} other {Les # lignes retenues sont prêtes à devenir des coûts}}",
       "nextIncomplete": "Aller à la prochaine ligne à compléter",
       "progressNone": "{count, plural, one {# ligne lue, à retenir ou non} other {# lignes lues, aucune retenue pour l'instant}}",
@@ -1236,7 +1275,7 @@
       "pushedCost": "Coût déjà écrit dans l'ERP : document {document} ({state}).",
       "unverifiedTotal": "Aucun total lisible sur ce document : vérifiez que toutes les lignes de la facture figurent ci-dessous.",
       "defaultContainer": "Rattachée au conteneur {container} parce que la facture a été déposée pour lui.",
-      "forcedRecorded": "Confirmée malgré la facture {invoice} de {vendor} déjà enregistrée : vous avez indiqué que ce n'en est pas une copie.",
+      "forcedRecorded": "Confirmée malgré la facture {invoice} de {vendor} déjà enregistrée, comme n'en étant pas une copie.",
       "severalEstimates": "{lineCount, plural, one {Ligne {lines}} other {Lignes {lines}}} : {count} estimés « {type} » ouverts sur la même cible, aucun n'a été remplacé. Remplacez à la main celui que cette facture solde."
     },
     "line": {
@@ -1357,7 +1396,45 @@
       "costs_deleted": "Coûts supprimés",
       "kind": "Type de fichier",
       "force_duplicates": "Doublons possibles acceptés",
-      "estimates_reopened": "Estimés rouverts"
+      "estimates_reopened": "Estimés rouverts",
+      "expires_at": "Expire le",
+      "label": "Objet",
+      "redacted": "Prestataires masqués",
+      "period": "Mois",
+      "containers": "Conteneurs",
+      "fob": "FOB",
+      "landed": "Coût rendu",
+      "acknowledged_drift": "Écart passé en écriture",
+      "milestone": "Étape",
+      "last_free_day": "Dernier jour franc",
+      "odoo_model": "Type de document Odoo",
+      "deleted": "Supprimé",
+      "assumed_coefficient": "Coefficient appliqué",
+      "tracking_provider_default": "Fournisseur de suivi par défaut",
+      "alerts": "Alertes",
+      "costs": "Coûts",
+      "invoices": "Factures",
+      "rate_cards": "Barèmes",
+      "shipments": "Expéditions",
+      "purchase_orders": "Commandes",
+      "suppliers": "Fournisseurs",
+      "products": "Fiches produit",
+      "timezone": "Fuseau horaire",
+      "supplier": "Fournisseur",
+      "incoterm": "Incoterm",
+      "order_date": "Date de commande",
+      "file_name": "Fichier",
+      "rows": "Lignes du fichier",
+      "valid_rows": "Lignes valides",
+      "refused": "Lignes refusées",
+      "lines_created": "Lignes de commande créées",
+      "lines_updated": "Lignes de commande mises à jour",
+      "containers_created": "Conteneurs créés",
+      "containers_updated": "Conteneurs mis à jour",
+      "products_created": "Fiches produit créées",
+      "products_updated": "Fiches produit mises à jour",
+      "costs_skipped": "Coûts déjà enregistrés, laissés tels quels",
+      "cost_dates": "Dates des coûts"
     },
     "invoiceStatus": {
       "NEEDS_REVIEW": "À relire",
@@ -1373,7 +1450,9 @@
       }
     },
     "filterLabel": "Action",
-    "filterApply": "Afficher"
+    "filterApply": "Afficher",
+    "itemCount": "{count, plural, one {# élément} other {# éléments}}",
+    "pair": "{name} : {value}"
   },
   "confidence": {
     "high": "Lecture fiable",
@@ -1414,7 +1493,6 @@
     "closed_ok": "Estimé clos"
   },
   "rateCards": {
-    "title": "Barèmes d'estimation",
     "hint": "Un barème par type de coût. Appliqué à la demande sur un conteneur pour créer des coûts estimés, remplacés ensuite par la facture réelle. Un barème {demurrage} est lu comme un tarif journalier, il sert au calcul des surestaries évitées.",
     "empty": "Aucun barème.",
     "emptyHint": "Pas encore de barème : commencez avec l'exemple ci-dessous, puis ajustez les montants à vos tarifs.",
@@ -1531,10 +1609,11 @@
         "unmatched_line": "{po_number} ligne {line_no} ({sku}) ne correspond à aucune ligne de la réception {receipt}. Les coûts sont poussés ligne à ligne : chaque ligne doit correspondre.",
         "already_pushed": "Ces coûts ont déjà été poussés sous le nom {existing}.",
         "noSku": "sans SKU",
-        "pushed_cost_changed": "{existing} a été écrit avec des montants qui ont changé depuis ({changes}). Le document porte toujours les anciens chiffres : refaites-le dans l'ERP, oubliez le push ici, puis repoussez.",
-        "pushed_cost_gone": "{existing} porte {costs}, qui ne compte plus sur ce conteneur (supprimé, clôturé ou déplacé). Le document le porte encore : refaites-le dans l'ERP, oubliez le push ici, puis repoussez.",
-        "ambiguous_line": "La ligne {line_no} de {po_number} ({sku}) correspond à {count} lignes de la réception {receipt}. Le même produit reçu en plusieurs lots y a plusieurs lignes et rien ne dit laquelle correspond à cette ligne de commande : ventiler au hasard mettrait le coût sur la mauvaise marchandise. Poussez ce conteneur à la main, ou réceptionnez la commande sur une seule ligne.",
-        "erp_currency_mismatch": "La société Odoo tient ses comptes en {erp_currency} alors que cette organisation travaille en {base_currency}. Nos montants seraient lus comme des {erp_currency} et la valorisation de stock serait fausse du taux de change : rien n'est écrit."
+        "pushed_cost_changed": "{existing} a été écrit avec des montants qui ont changé depuis ({changes}). Le document porte toujours les anciens chiffres. Encore en brouillon : supprimez-le dans l'ERP, oubliez le push ici, puis repoussez. Déjà validé : oubliez le push ici avec un motif, puis repoussez ; seule la différence partira, en ajustement.",
+        "pushed_cost_gone": "{existing} porte {costs}, qui ne compte plus sur ce conteneur (supprimé, clôturé ou déplacé). Le document le porte encore. Encore en brouillon : supprimez-le dans l'ERP, oubliez le push ici, puis repoussez. Déjà validé : oubliez le push ici avec un motif, puis repoussez ; il sera repris en ajustement.",
+        "ambiguous_line": "La ligne {line_no} de {po_number} ({sku}) correspond à {count} lignes de la réception {receipt}. Le même produit reçu en plusieurs lots y a plusieurs lignes et leurs quantités ne disent pas laquelle correspond à cette ligne de commande : ventiler au hasard mettrait le coût sur la mauvaise marchandise. Poussez ce conteneur à la main, ou réceptionnez la commande sur une seule ligne.",
+        "erp_currency_mismatch": "La société Odoo tient ses comptes en {erp_currency} alors que cette organisation travaille en {base_currency}. Nos montants seraient lus comme des {erp_currency} et la valorisation de stock serait fausse du taux de change : rien n'est écrit.",
+        "adjustment_unplaced": "{existing} a été validé avec des montants qui ont changé depuis ({changes}), et sa ventilation par ligne de réception n'est pas connue ici. Sans elle, la différence ne peut pas être placée sur la bonne marchandise : rien n'est écrit pour ce coût, saisissez l'ajustement à la main dans l'ERP."
       },
       "pushedAs": "déjà dans {name}",
       "willGo": "{count, plural, one {# coût partira} other {# coûts partiront}}",
@@ -1549,12 +1628,12 @@
       "forgottenReason": "motif : {reason}",
       "costCount": "{count, plural, one {# coût} other {# coûts}}",
       "forget": "Oublier ce push",
-      "forgetHint": "Seulement si le brouillon a été supprimé dans Odoo : ses coûts redeviennent poussables. Le document reste dans l'historique.",
+      "forgetHint": "Brouillon supprimé dans Odoo : ses coûts redeviennent poussables. Document validé (motif obligatoire) : ses montants restent comptés, seule une différence repartira, en ajustement. Le document reste dans l'historique.",
       "reasonLabel": "Motif (visible dans l'historique)",
       "reasonPlaceholder": "Brouillon supprimé dans Odoo le …, parce que …",
       "confirm": "Oublier",
       "cancel": "Annuler",
-      "forgotten_ok": "Push oublié : ses coûts sont de nouveau poussables.",
+      "forgotten_ok": "Push oublié : l'aperçu montre ce qu'il reste à écrire dans l'ERP.",
       "forgetFailed": "Impossible d'oublier ce push",
       "stillThere": "{name} est encore dans Odoo ({state}). Supprimez-le là-bas d'abord, ou gardez-le : on ne désynchronise pas ce qui existe."
     },
@@ -1590,7 +1669,8 @@
       "container": "Conteneur",
       "paid": "Payé",
       "avoided": "Évité",
-      "rule": "Règle"
+      "rule": "Règle",
+      "estimated": "Dont estimé"
     },
     "unknownRoute": "route inconnue",
     "empty": "Aucune marchandise arrivée sur la période. Un conteneur sans date de déchargement, d'arrivée ni d'ETA n'est pas compté.",
@@ -1641,7 +1721,8 @@
         "title": "Du prix d'achat au coût rendu",
         "subtitle": "Ce que chaque famille de frais ajoute au prix payé aux fournisseurs."
       }
-    }
+    },
+    "estimated": "estimé"
   },
   "workflow": {
     "nextStep": "Prochaine étape",
@@ -1679,15 +1760,13 @@
     "invoices": {
       "reviewWaiting": "{count, plural, one {# facture à relire} other {# factures à relire}}",
       "openNext": "Ouvrir la prochaine facture",
-      "backContainers": "Retour aux conteneurs",
-      "deposit": "Déposez la facture transitaire : l'extraction propose les lignes, rien n'est créé sans votre validation.",
-      "depositAction": "Déposer une facture"
+      "backContainers": "Retour aux conteneurs"
     },
     "invoiceDetail": {
       "review": "Relisez chaque ligne proposée, corrigez si besoin, puis confirmez pour créer les coûts.",
       "reviewAction": "Relire les lignes",
       "backList": "Retour à la liste",
-      "confirmed": "Facture confirmée — les coûts sont ventilés. Ouvrez le conteneur pour voir le coût unitaire par référence.",
+      "confirmed": "Facture confirmée — les coûts sont ventilés. {count, plural, one {Ouvrez le conteneur pour voir le coût unitaire par référence.} other {Elle porte sur # conteneurs : ouvrez chacun pour voir le coût unitaire par référence.}}",
       "seeUnitCosts": "Coûts unitaires · {container}",
       "openContainer": "Fiche {container}",
       "extracting": "La facture est en cours de lecture. La page se rafraîchit automatiquement.",
@@ -1738,9 +1817,8 @@
       "mappingAction": "Faire correspondre les colonnes",
       "reviewErrors": "Le rapport de validation a trouvé des erreurs — corrigez le fichier ou importez seulement les lignes valides.",
       "reviewOk": "Le rapport de validation est propre — importez les lignes.",
-      "reviewAction": "Voir le rapport de validation",
-      "done": "Import validé. Vérifiez que vos commandes sont bien chargées dans les conteneurs.",
-      "doneAction": "Voir les commandes"
+      "done": "{kind, select, PRODUCTS {Le tarif est importé : ses taux de droits, poids et volumes seront repris sur les lignes de commande importées ensuite.} CONTAINERS {Le suivi est importé : vérifiez les dates d'arrivée et le risque de surestaries sur les conteneurs.} COSTS {Les frais sont importés : voyez ce qui manque encore pour que l'audit de la période dise juste.} other {Import validé. Vérifiez que vos commandes sont bien chargées dans les conteneurs.}}",
+      "doneAction": "{kind, select, PRODUCTS {Retour aux imports} CONTAINERS {Voir les conteneurs} COSTS {Préparer l'audit} other {Voir les commandes}}"
     },
     "pos": {
       "empty": "Aucune commande pour l'instant. Importez un fichier ou chargez le jeu d'exemple.",
@@ -1854,7 +1932,8 @@
       "varianceHint": "Sur les coûts estimés à l'embarquement puis remplacés par une facture : réel moins estimé. Positif : vos factures dépassent vos barèmes.",
       "varianceSub": "{pairs, plural, one {# coût recalé} other {# coûts recalés}}, pour {estimated} estimés",
       "varianceNone": "Aucun estimé remplacé par une facture sur la période.",
-      "dndAtRisk": "{amount} en cours"
+      "dndAtRisk": "{amount} en cours",
+      "feesEstimated": "dont {amount} estimés"
     },
     "structure": {
       "title": "Frais d'approche par mois",
@@ -1884,7 +1963,8 @@
         "unitFob": "Achat unitaire",
         "unitLanded": "Rendu unitaire",
         "coef": "Coef."
-      }
+      },
+      "estimated": "estimé"
     },
     "orgChanged": {
       "title": "Votre dernière action n'a pas été enregistrée",
@@ -1951,7 +2031,9 @@
     "subtitle": "Coût rendu : {landed}, TVA import exclue.",
     "coef": "Coefficient d'approche",
     "fob": "Prix d'achat (FOB)",
-    "ofFob": "du FOB"
+    "ofFob": "du FOB",
+    "subtitleEstimated": "Coût rendu : {landed}, TVA import exclue, dont {estimated} encore estimés.",
+    "coefEstimated": "en partie estimé"
   },
   "skus": {
     "title": "Références",
@@ -2008,7 +2090,7 @@
     "detail": {
       "arrivals": "{count, plural, one {# arrivage} other {# arrivages}}",
       "unitLanded": "Rendu unitaire moyen",
-      "unitLandedHint": "Coût rendu total de la référence divisé par la quantité reçue, tous arrivages confondus. TVA import exclue.",
+      "unitLandedHint": "Coût rendu total de la référence divisé par la quantité reçue dans les conteneurs qui portent des frais. TVA import exclue.",
       "coef": "coefficient d'approche {coef}",
       "last": "Dernier arrivage",
       "vsPrevious": "vs arrivage précédent",
@@ -2018,7 +2100,9 @@
       "margin": "Marge au coût rendu moyen",
       "marginSub": "{unit} par unité, vendu {price} HT",
       "marginOtherCurrency": "Prix de vente dans une autre devise : pas de marge calculée.",
-      "marginLast": "{margin} sur le dernier arrivage"
+      "marginLast": "{margin} sur le dernier arrivage",
+      "withEstimates": "dont {count, plural, one {# conteneur encore estimé} other {# conteneurs encore estimés}}",
+      "withEstimatesUncounted": "dont des coûts encore estimés"
     },
     "trend": {
       "title": "Coût unitaire, arrivage après arrivage",
@@ -2161,12 +2245,13 @@
     },
     "ready": {
       "title": "Avant de clôturer",
-      "subtitle": "Rien de tout cela ne bloque : c'est ce qu'il vaut mieux régler d'abord.",
+      "subtitle": "Seul un taux de change manquant bloque la clôture : le reste est ce qu'il vaut mieux régler d'abord.",
       "see": "Voir",
       "estimates": "{count, plural, =0 {Aucun conteneur ne porte d'estimé en attente de facture.} one {# conteneur porte encore des coûts estimés.} other {# conteneurs portent encore des coûts estimés.}}",
       "invoices": "{count, plural, =0 {Aucune facture en attente de relecture.} one {# facture attend votre relecture.} other {# factures attendent votre relecture.}}",
       "unallocated": "{count, plural, =0 {Tous les coûts sont ventilés.} one {# coût n'a pas pu être ventilé.} other {# coûts n'ont pas pu être ventilés.}}",
-      "nocost": "{count, plural, =0 {Tous les conteneurs chargés ont des coûts.} one {# conteneur chargé n'a aucun coût.} other {# conteneurs chargés n'ont aucun coût.}}"
+      "nocost": "{count, plural, =0 {Tous les conteneurs chargés ont des coûts.} one {# conteneur chargé n'a aucun coût.} other {# conteneurs chargés n'ont aucun coût.}}",
+      "norate": "{count, plural, =0 {Toutes les commandes du mois ont un taux de change.} one {# commande sans taux de change : sa valeur est inconnue, le mois ne peut pas être clôturé.} other {# commandes sans taux de change : leur valeur est inconnue, le mois ne peut pas être clôturé.}}"
     },
     "estimates": {
       "title": "Conteneurs encore en estimé",
@@ -2265,6 +2350,7 @@
     "caveat": {
       "estimated": "{amount} de ce coût rendu reposent encore sur des estimés, en attendant la facture : le chiffre sera recalé à réception.",
       "allInvoiced": "Tous les coûts retenus proviennent de factures : aucun estimé.",
+      "noCharge": "Aucun frais n'est encore ventilé sur ce dossier : le coût rendu n'est pas encore connu, il ne serait que le prix d'achat (FOB).",
       "unallocated": "{amount} de frais n'ont pas pu être ventilés (donnée manquante sur une ligne) et ne sont pas dans les coûts unitaires ci-dessus.",
       "vat": "La TVA à l'importation ({amount}) est récupérable : elle est suivie pour la trésorerie et exclue du coût de revient.",
       "vatNone": "La TVA à l'importation, récupérable, est exclue du coût de revient.",
@@ -2621,6 +2707,7 @@
       "INVOICES_NOT_READ": "{count, plural, one {# facture n'est pas encore lue.} other {# factures ne sont pas encore lues.}}",
       "INVOICES_TO_REVIEW": "{count, plural, one {# facture attend votre relecture.} other {# factures attendent votre relecture.}}",
       "COSTS_UNALLOCATED": "{count, plural, one {# coût n'est réparti sur aucune ligne} other {# coûts ne sont répartis sur aucune ligne}} : {reason}",
+      "ORDERS_WITHOUT_FX_RATE": "{count, plural, one {# commande sans taux de change : la valeur de ses marchandises est inconnue, ses marges et les frais répartis à la valeur seraient faux.} other {# commandes sans taux de change : la valeur de leurs marchandises est inconnue, leurs marges et les frais répartis à la valeur seraient faux.}}",
       "SAME_INVOICE_TWICE": "{count, plural, one {# facture est enregistrée deux fois : le coût de revient la compte deux fois.} other {# factures sont enregistrées deux fois : le coût de revient les compte deux fois.}}",
       "CREDIT_NOTES_SKIPPED": "{count, plural, one {# avoir écarté à l'import : vérifiez qu'il ne rembourse pas un constat.} other {# avoirs écartés à l'import : vérifiez qu'aucun ne rembourse un constat.}}",
       "PO_SPLIT": "{count, plural, one {# commande est répartie sur plusieurs conteneurs : ses chargements sont à vérifier.} other {# commandes sont réparties sur plusieurs conteneurs : leurs chargements sont à vérifier.}}",
@@ -2655,10 +2742,27 @@
       "setType": "Indiquer le type sur la fiche",
       "setCoefficient": "Saisir le coefficient",
       "seeCosts": "Voir les frais du conteneur",
-      "deleteReversedCost": "Supprimer le coût annulé sur la fiche"
+      "deleteReversedCost": "Supprimer le coût annulé sur la fiche",
+      "setOrderRate": "Saisir le taux de change"
     },
     "period": "Dernier trimestre, du {from} au {to}",
-    "summary": "{blocking, plural, =0 {Rien ne fausse l'audit} one {# point fausserait l'audit} other {# points fausseraient l'audit}}, {limits, plural, =0 {aucune limite} one {# limite} other {# limites}}",
+    "summary": "{blocking, plural, =0 {Rien ne fausse l'audit} one {# point fausserait l'audit} other {# points fausseraient l'audit}}{limits, plural, =0 {} one { · # point qu'il ne pourra pas mesurer} other { · # points qu'il ne pourra pas mesurer}}",
     "otherPeriod": "Choisir une autre période"
+  },
+  "reportTotals": {
+    "estimated": "estimé",
+    "landedNone": "Aucun frais encore ventilé : ce ne serait que le FOB.",
+    "landedEstimated": "dont {amount} estimés, pas encore facturés"
+  },
+  "fobMissing": {
+    "total": "{count, plural, one {Une ligne de commande n'a pas de taux de change : la valeur de ses marchandises est inconnue.} other {# lignes de commande n'ont pas de taux de change : la valeur de leurs marchandises est inconnue.}} Le FOB, le coût de revient et ce qui en découle (coefficient, coût unitaire, marge) ne sont pas calculés tant que le taux n'est pas saisi sur la commande.",
+    "line": "Commande sans taux de change : valeur inconnue",
+    "setRate": "Saisir le taux sur la commande"
+  },
+  "withoutCharge": {
+    "total": "{count, plural, one {Un conteneur n'a encore aucun frais, ni estimé ni facturé : son coût rendu ne serait que son FOB. Il n'est donc compté ni dans le coût rendu, ni dans le coefficient, ni dans les coûts unitaires et les marges ; ses marchandises restent comptées dans le FOB.} other {# conteneurs n'ont encore aucun frais, ni estimé ni facturé : leur coût rendu ne serait que leur FOB. Ils ne sont donc comptés ni dans le coût rendu, ni dans le coefficient, ni dans les coûts unitaires et les marges ; leurs marchandises restent comptées dans le FOB.}}",
+    "count": "{count, plural, one {# conteneur sans aucun frais, non compté} other {# conteneurs sans aucun frais, non comptés}}",
+    "box": "Aucun frais, ni estimé ni facturé : ce ne serait que le FOB",
+    "see": "Voir les conteneurs"
   }
 }

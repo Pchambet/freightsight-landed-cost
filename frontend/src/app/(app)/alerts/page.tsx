@@ -36,7 +36,7 @@ export default async function AlertsPage({ searchParams }: { searchParams: Promi
   const alerts: Alert[] = res.data ?? [];
   const unread = alerts.filter((a) => !a.read_at).length;
 
-  // The API has no "superseded" flag (needs_other_lane), but every alert about the same container and
+  // The API has no "superseded" flag, but every alert about the same container and
   // kind is a fresh read of the same underlying risk — the older one is grouped here client-side so
   // it stops reading as a second, unrelated problem (two unread DND_RISK alerts for one
   // container, an "older" one already overtaken by a newer one for the same container and kind).

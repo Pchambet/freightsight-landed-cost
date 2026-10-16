@@ -11,10 +11,11 @@ const FILE_NAMES: Record<string, { fr: string; en: string }> = {
 };
 
 /**
- * The columns a ledger or a FEC export brings as it is (the account, a credit column): read when a
- * file has them, left out of the template, which is a simple list typed by hand.
+ * The columns an export brings as it is — a ledger's account and credit, an order line's total weight
+ * and volume — read when a file has them, left out of the template, which is a simple list typed by
+ * hand: one weight per piece, not two ways of saying it.
  */
-const LEDGER_ONLY: Record<string, string[]> = { COSTS: ["account", "credit"] };
+const LEDGER_ONLY: Record<string, string[]> = { COSTS: ["account", "credit"], PURCHASE_ORDERS: ["line_weight_kg", "line_volume_cbm"] };
 
 /**
  * An empty file with the columns an import of this kind reads, as the API names them (`header_fr` /

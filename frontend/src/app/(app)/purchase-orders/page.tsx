@@ -6,6 +6,7 @@ import { Card, PageHeader, btnSecondary, input, td, tdRight, th, thRight } from 
 import { Money } from "@/components/shared/Money";
 import WorkflowNextStep from "@/features/workflow/WorkflowNextStep";
 import { purchaseOrdersHubStep } from "@/features/workflow/steps";
+import { FobMissingLine } from "@/features/report/FobMissing";
 import { api } from "@/lib/api/client";
 
 export async function generateMetadata(): Promise<Metadata> {
@@ -86,7 +87,7 @@ export default async function PurchaseOrdersPage({ searchParams }: { searchParam
                     <td className={`${td} text-slate-600`}>{po.supplier_name ?? tc("empty")}</td>
                     <td className={`${td} font-mono text-xs`}>{po.currency}</td>
                     <td className={tdRight}>{po.line_count}</td>
-                    <td className={tdRight}><Money amount={po.fob_base} currency={cur} /></td>
+                    <td className={tdRight}><Money amount={po.fob_base} currency={cur} />{po.fob_base === null ? <FobMissingLine href={`/purchase-orders/${po.id}#taux`} /> : null}</td>
                     <td className={`${td} font-mono text-xs text-slate-600`}>{po.container_numbers.join(", ") || <span className="text-slate-500">{t("notLoaded")}</span>}</td>
                   </tr>
                 ))

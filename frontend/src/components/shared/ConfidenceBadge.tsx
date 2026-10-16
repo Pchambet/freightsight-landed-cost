@@ -12,10 +12,9 @@ const STYLE: Record<"high" | "medium" | "low" | "confirmed", string> = {
  * What a DAF should act on ("lecture automatique · à relire") instead of a bare decimal like
  * "0.60". The exact score stays available as a tooltip for whoever wants it.
  *
- * `band` is the backend's own `confidence_band` (HIGH/MEDIUM/LOW at 0.8/0.5, not yet in the
- * generated schema — needs_other_lane), preferred over recomputing the tier here so the two never
- * disagree on the threshold; the local computation stays as the fallback for a caller that has not
- * been updated to pass it, or a response from before the field existed.
+ * `band` is the backend's own `confidence_band` (HIGH/MEDIUM/LOW at 0.8/0.5), preferred over
+ * recomputing the tier here so the two never disagree on the threshold; the local computation is
+ * the fallback when the API gives no band.
  *
  * `confirmed` overrides the tier wording once the invoice is confirmed: a confirmed line is no
  * longer "to review" even if it was read with medium/low confidence — the badge says so

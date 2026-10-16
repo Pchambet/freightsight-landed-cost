@@ -15,6 +15,8 @@ import WorkflowNextStep from "@/features/workflow/WorkflowNextStep";
 import { reportsHubStep } from "@/features/workflow/steps";
 import { api, type DndAnalysis, type LandedCostAnalysis } from "@/lib/api/client";
 import { dateShort, daysUntil, money, pct, qty } from "@/lib/format";
+import FobMissing, { FobMissingLine } from "@/features/report/FobMissing";
+import WithoutCharge, { WithoutChargeLine } from "@/features/report/WithoutCharge";
 
 export async function generateMetadata(): Promise<Metadata> {
   const t = await getTranslations("reports");
@@ -42,6 +44,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
   const bucketLabel = (b: { key: string; label: string }) => (groupBy === "cost_type" && tt.has(b.key as never) ? tt(b.key as never) : b.label === "unknown route" ? t("unknownRoute") : b.label);
   const familyLabels = Object.fromEntries(COST_FAMILIES.map((f) => [f, tfam(f)])) as Record<CostFamily, string>;
   const ratio = (v: number) => new Intl.NumberFormat(locale === "fr" ? "fr-FR" : "en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v);
+  const estimatedBadge = <span className="ml-2 rounded bg-violet-50 px-1.5 py-0.5 text-[11px] font-medium text-violet-800 ring-1 ring-inset ring-violet-600/20">{t("estimated")}</span>;
   const csvQuery = new URLSearchParams({ locale, ...(period.period_from ? { period_from: period.period_from } : {}), ...(period.period_to ? { period_to: period.period_to } : {}) }).toString();
   // Why a line's "avoided" is what it is, from the API's rule code and its own figures — no longer a
   // parse of an English sentence.
@@ -89,6 +92,9 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
         <button type="submit" className={btnSecondary}>{t("apply")}</button>
       </form>
 
+      <FobMissing lines={a?.totals.fob_missing_lines} className="mb-6" />
+      <WithoutCharge containers={a?.totals.containers_without_charge} className="mb-6" />
+
       {a && a.buckets.length > 0 ? (
         <Panel title={t(`chart.${groupBy}.title`)} subtitle={t(`chart.${groupBy}.subtitle`)} className="mb-6">
           {groupBy === "month" ? (
@@ -100,10 +106,12 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
               totalLabel={t("chart.total")}
             />
           ) : groupBy === "cost_type" ? (
-            <BreakdownBar fob={Number(a.totals.fob)} families={foldFamilies(a.totals.by_cost_type as Record<string, string>)} currency={cur} locale={locale} fobLabel={t("chart.fob")} familyLabels={familyLabels} ofFobLabel={t("chart.ofFob")} />
+            a.totals.charged_fob === null ? (
+              a.totals.fob_missing ? <FobMissing lines={a.totals.fob_missing_lines} href={null} /> : <WithoutCharge containers={a.totals.containers_without_charge} href={null} />
+            ) : <BreakdownBar fob={Number(a.totals.charged_fob)} families={foldFamilies(a.totals.by_cost_type as Record<string, string>)} currency={cur} locale={locale} fobLabel={t("chart.fob")} familyLabels={familyLabels} ofFobLabel={t("chart.ofFob")} />
           ) : (
             <StackedRows
-              rows={a.buckets.map((b) => ({ key: b.key, label: bucketLabel(b), fob: Number(b.fob), families: foldFamilies(b.by_cost_type as Record<string, string>), display: Number(b.fob) > 0 ? ratio(Number(b.landed) / Number(b.fob)) : "—" }))}
+              rows={a.buckets.map((b) => ({ key: b.key, label: bucketLabel(b), fob: b.charged_fob === null ? 0 : Number(b.charged_fob), families: foldFamilies(b.by_cost_type as Record<string, string>), display: b.coefficient === null ? "—" : ratio(Number(b.coefficient)) }))}
               currency={cur}
               locale={locale}
               familyLabels={familyLabels}
@@ -116,24 +124,34 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
       <Card title={t("landed")} className="mb-6">
         <ScrollRegion label={t("landed")}>
           <table className="min-w-full divide-y divide-slate-200 text-sm">
-            <thead className="bg-slate-50"><tr><th className={th}>{t("th.label")}</th><th className={thRight}>{t("th.loads")}</th><th className={thRight}>{t("th.quantity")}</th><th className={thRight}>{t("th.fob")}</th><th className={thRight}>{t("th.allocated")}</th><th className={thRight}>{t("th.landed")}</th><th className={thRight}>{t("th.freightShare")}</th></tr></thead>
+            <thead className="bg-slate-50"><tr><th className={th}>{t("th.label")}</th><th className={thRight}>{t("th.loads")}</th><th className={thRight}>{t("th.quantity")}</th><th className={thRight}>{t("th.fob")}</th><th className={thRight}>{t("th.allocated")}</th><th className={thRight}>{t("th.landed")}</th><th className={thRight}>{t("th.estimated")}</th><th className={thRight}>{t("th.freightShare")}</th></tr></thead>
             <tbody className="divide-y divide-slate-200">
-              {!a || a.buckets.length === 0 ? <tr><td colSpan={7} className="px-5 py-8 text-center text-sm text-slate-500">{t("empty")}</td></tr> : (
+              {!a || a.buckets.length === 0 ? <tr><td colSpan={8} className="px-5 py-8 text-center text-sm text-slate-500">{t("empty")}</td></tr> : (
                 <>
                   {a.buckets.map((b) => (
                     <tr key={b.key} className="hover:bg-slate-50">
-                      <td className={td}>{bucketLabel(b)}</td>
+                      <td className={td}>
+                        {bucketLabel(b)}
+                        {groupBy !== "cost_type" ? (
+                          <>
+                            {b.fob === null ? <FobMissingLine /> : null}
+                            <WithoutChargeLine count={b.containers_without_charge} />
+                          </>
+                        ) : null}
+                      </td>
                       <td className={tdRight}>{b.load_count}</td>
                       <td className={tdRight}>{qty(b.quantity, locale)}</td>
                       <td className={tdRight}><Money amount={b.fob} currency={cur} /></td>
                       <td className={tdRight}><Money amount={b.allocated} currency={cur} className="text-blue-700" /></td>
                       <td className={`${tdRight} font-medium`}><Money amount={b.landed} currency={cur} /></td>
+                      <td className={`${tdRight} text-violet-800`}>{Number(b.estimated) > 0 ? <Money amount={b.estimated} currency={cur} /> : "—"}</td>
                       <td className={tdRight}>{b.freight_share_pct != null ? pct(b.freight_share_pct, locale) : "—"}</td>
                     </tr>
                   ))}
                   <tr className="bg-slate-50 font-medium">
-                    <td className={td}>{tc("total")}</td><td className={tdRight}>{a.totals.load_count}</td><td className={tdRight}>{qty(a.totals.quantity, locale)}</td>
+                    <td className={td}>{tc("total")}<WithoutChargeLine count={a.totals.containers_without_charge} /></td><td className={tdRight}>{a.totals.load_count}</td><td className={tdRight}>{qty(a.totals.quantity, locale)}</td>
                     <td className={tdRight}><Money amount={a.totals.fob} currency={cur} /></td><td className={tdRight}><Money amount={a.totals.allocated} currency={cur} /></td><td className={tdRight}><Money amount={a.totals.landed} currency={cur} /></td>
+                    <td className={`${tdRight} text-violet-800`}>{Number(a.totals.estimated) > 0 ? <Money amount={a.totals.estimated} currency={cur} /> : "—"}</td>
                     <td className={tdRight}>{a.totals.freight_share_pct != null ? pct(a.totals.freight_share_pct, locale) : "—"}</td>
                   </tr>
                 </>
@@ -150,7 +168,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
               <thead className="bg-slate-50"><tr><th className={th}>{t("th.sku")}</th><th className={thRight}>{t("th.quantity")}</th><th className={thRight}>{t("th.fob")}</th><th className={thRight}>{t("th.landed")}</th><th className={thRight}>{t("th.unit")}</th></tr></thead>
               <tbody className="divide-y divide-slate-200">
                 {!a || a.skus.length === 0 ? <tr><td colSpan={5} className="px-5 py-6 text-center text-sm text-slate-500">{t("empty")}</td></tr> : a.skus.map((s) => (
-                  <tr key={s.sku}><td className={`${td} font-mono`}>{s.sku}</td><td className={tdRight}>{qty(s.quantity, locale)}</td><td className={tdRight}><Money amount={s.fob} currency={cur} /></td><td className={tdRight}><Money amount={s.landed} currency={cur} /></td><td className={`${tdRight} font-medium text-emerald-700`}><Money amount={s.unit_landed_cost} currency={cur} /></td></tr>
+                  <tr key={s.sku}><td className={`${td} font-mono`}>{s.sku}{Number(s.estimated) > 0 ? estimatedBadge : null}{s.fob === null ? <FobMissingLine /> : null}<WithoutChargeLine count={s.containers_without_charge} /></td><td className={tdRight}>{qty(s.quantity, locale)}</td><td className={tdRight}><Money amount={s.fob} currency={cur} /></td><td className={tdRight}><Money amount={s.landed} currency={cur} /></td><td className={`${tdRight} font-medium text-emerald-700`}><Money amount={s.unit_landed_cost} currency={cur} /></td></tr>
                 ))}
               </tbody>
             </table>
@@ -160,7 +178,8 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
         <Card title={t("dnd")} right={<span className="text-xs text-slate-500 max-w-sm text-right">{t("dndHint", { demurrage: tt("DEMURRAGE") })}</span>}>
           <div className="px-5 py-3 flex gap-8 border-b border-slate-200 text-sm">
             <div><div className="text-xs text-slate-500 uppercase tracking-wider">{t("th.paid")}</div><div className="font-semibold tabular-nums text-red-700"><Money amount={d?.paid ?? "0.00"} currency={cur} /></div></div>
-            <div><div className="text-xs text-slate-500 uppercase tracking-wider">{t("th.avoided")}</div><div className="font-semibold tabular-nums text-emerald-700"><Money amount={d?.avoided ?? "0.00"} currency={cur} /></div></div>
+            <div><div className="text-xs text-slate-500 uppercase tracking-wider">{t("th.avoided")}</div>{/* Nothing estimable is no figure, not « 0,00 € évités » beside lines that each say "not estimable". */}
+              <div className="font-semibold tabular-nums text-emerald-700">{d && d.estimable > 0 ? <Money amount={d.avoided} currency={cur} /> : <span className="text-slate-500">—</span>}</div></div>
           </div>
           {(d?.at_risk?.length ?? 0) > 0 ? (
             <div className="px-5 py-3 border-b border-amber-200 bg-amber-50/60 text-sm">

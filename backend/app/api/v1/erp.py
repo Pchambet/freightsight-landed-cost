@@ -148,7 +148,10 @@ def _preview_response(plan: landed_cost.Plan) -> schemas.ErpLandedCostPreview:
             for cost in plan.costs
         ],
         total=plan.total,
-        blockers=[schemas.ErpBlocker(code=b.code, message=b.message, params=b.params) for b in plan.blockers],
+        blockers=[
+            schemas.ErpBlocker(code=b.code, message=b.message, params=b.params, blocking=b.blocking)
+            for b in plan.blockers
+        ],
         pushable=plan.pushable,
         already_pushed_as=", ".join(sorted({c.pushed_as for c in plan.costs if c.pushed_as})) or None,
     )

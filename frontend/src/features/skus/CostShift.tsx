@@ -1,7 +1,7 @@
 import { COST_FAMILIES, foldFamilies, type CostFamily } from "@/components/charts/families";
 import { money } from "@/lib/format";
 
-type Arrival = { unit_fob: string; unit_by_cost_type: Record<string, string> };
+type Arrival = { unit_fob: string | null; unit_by_cost_type: Record<string, string> };
 
 /**
  * Why the unit cost moved between two arrivals: the purchase price and each family of charges, as
@@ -26,6 +26,8 @@ export default function CostShift({
   familyLabels: Record<CostFamily, string>;
   totalLabel: string;
 }) {
+  // Without the purchase price of both arrivals there is no shift to explain (an order with no rate).
+  if (previous.unit_fob === null || last.unit_fob === null) return null;
   const before = foldFamilies(previous.unit_by_cost_type);
   const after = foldFamilies(last.unit_by_cost_type);
   const rows = [

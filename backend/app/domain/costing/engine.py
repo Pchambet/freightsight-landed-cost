@@ -15,6 +15,7 @@ from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
 from uuid import UUID
 
 CENT = Decimal("0.01")
+ZERO = Decimal("0.00")
 HUNDRED = Decimal("100.00")
 
 DUTIABLE = {"OCEAN_FREIGHT", "AIR_FREIGHT", "INSURANCE", "ORIGIN_CHARGES"}  # enter the customs value
@@ -33,12 +34,15 @@ class AllocationError(ValueError):
 class MissingBasisError(AllocationError):
     code = "MISSING_BASIS"
 
-    def __init__(self, method: str, load_ids: list[UUID]):
+    def __init__(self, method: str, load_ids: list[UUID], *, no_value: bool = False):
         super().__init__(f"{method}: basis missing on {len(load_ids)} load(s)")
         self.load_ids = load_ids
         # A duty that cannot be spread is missing a duty RATE, not a weight, a volume or a value:
-        # the screen used to tell the user to go and look for the wrong thing.
-        if method == "BY_THEORETICAL_DUTY":
+        # the screen used to tell the user to go and look for the wrong thing. A value that is missing
+        # is an order's exchange rate, for the same reason.
+        if no_value:
+            self.code = "MISSING_FX_RATE"
+        elif method == "BY_THEORETICAL_DUTY":
             self.code = "MISSING_DUTY_RATE"
 
 
@@ -102,14 +106,23 @@ class Load:
     po_id: UUID
     po_line_id: UUID
     quantity: Decimal
-    unit_price_base: Decimal  # already converted at the PO's fixed rate
+    #: Already converted at the PO's fixed rate; None when the order has no rate, and so no value here.
+    unit_price_base: Decimal | None
     unit_weight_kg: Decimal | None
     unit_volume_cbm: Decimal | None
     duty_rate: Decimal | None
     sort_key: tuple[str, str, int]  # (container_number, po_number, line_no)
 
     @property
-    def fob(self) -> Decimal:
+    def value_known(self) -> bool:
+        return self.unit_price_base is not None
+
+    @property
+    def fob(self) -> Decimal | None:
+        """The line's value, or None when its order has no rate: never priced at a guessed one, and
+        never a 0 that a total would quietly add up (see `costing.value`)."""
+        if self.unit_price_base is None:
+            return None
         return quantize_cent(self.quantity * self.unit_price_base)
 
 
@@ -179,7 +192,13 @@ def _targets(cost: Cost, loads: list[Load]) -> list[Load]:
     return [ld for ld in loads if getattr(ld, key) == cost.target_id]
 
 
+#: The methods whose basis is the goods' value, which an order without an exchange rate does not have.
+VALUE_METHODS = {"BY_VALUE", "BY_CIF_VALUE", "BY_THEORETICAL_DUTY"}
+
+
 def _weight(load: Load, method: str, cif: dict[UUID, Decimal]) -> Decimal | None:
+    if method in VALUE_METHODS and not load.value_known:
+        return None
     match method:
         case "BY_VALUE":
             return load.fob
@@ -208,7 +227,8 @@ def _allocate_proportional(
     weights = {ld.id: _weight(ld, method, cif) for ld in targets}
     missing = [k for k, w in weights.items() if w is None]
     if missing:
-        raise MissingBasisError(method, missing)
+        no_value = method in VALUE_METHODS and any(not ld.value_known for ld in targets if ld.id in missing)
+        raise MissingBasisError(method, missing, no_value=no_value)
     if zero_basis is not None and method in PHYSICAL_METHODS:
         zero_basis += [k for k, w in weights.items() if w == 0]
     parts = split_largest_remainder(
@@ -254,7 +274,8 @@ def allocate(
     """Allocate every cost down to the leaves. Never raises for data problems: they land in `unallocated`."""
     result = AllocationResult()
     sorted_loads = sorted(loads, key=lambda ld: ld.sort_key)
-    cif: dict[UUID, Decimal] = {ld.id: ld.fob for ld in sorted_loads}
+    # A load with no value starts its CIF at nothing; no method that reads the CIF weighs it anyway.
+    cif: dict[UUID, Decimal] = {ld.id: ZERO if ld.fob is None else ld.fob for ld in sorted_loads}
     pass1 = [c for c in costs if c.method not in DUTY_LIKE_METHODS]
     pass2 = [c for c in costs if c.method in DUTY_LIKE_METHODS]
 

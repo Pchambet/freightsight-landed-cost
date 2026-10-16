@@ -440,6 +440,8 @@ class _Run:
     unknown: dict[str, list[tuple[int, str, Decimal]]] = field(default_factory=lambda: defaultdict(list))
     #: The rows refused whose charge is therefore not in the books: `ImportJob.refused_rows`.
     refused: list[dict[str, Any]] = field(default_factory=list)
+    #: Rows whose amount states no currency anywhere — no column, nothing in the cell or its header.
+    assumed_currency: int = 0
 
 
 def apply_costs(
@@ -509,6 +511,18 @@ def apply_costs(
                     "currency": credit.currency,
                     **({"reverses_cost_id": str(reversed_cost.id)} if reversed_cost is not None else {}),
                 },
+            )
+        )
+    if run.assumed_currency:
+        # Right for a French general ledger, wrong for a forwarder's statement in dollars: the
+        # preview says which currency was taken, so that a person can contradict it.
+        report.warnings.append(
+            RowIssue(
+                table.header_row,
+                "currency",
+                "CURRENCY_ASSUMED",
+                f"{run.assumed_currency} amount(s) state no currency and are read in {t.org.base_currency}",
+                {"currency": t.org.base_currency, "rows": run.assumed_currency},
             )
         )
     report.extra |= counters | {
@@ -756,6 +770,8 @@ def _currency(run: _Run, r: _Row, amount: Decimal | None) -> str:
     stated = (r.text("currency") or "").upper() or None
     in_amount = _currency_of(raw_amount)
     currency = stated or in_amount or run.header_currency or run.t.org.base_currency
+    if amount is not None and not (stated or in_amount or run.header_currency):
+        run.assumed_currency += 1
     if stated is not None and (len(stated) != 3 or not stated.isalpha()):
         r.error("currency", "INVALID_CURRENCY", f"{stated!r} is not a 3-letter ISO code", value=stated)
     said = stated or run.header_currency

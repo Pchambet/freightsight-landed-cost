@@ -660,6 +660,26 @@ def test_an_amount_is_never_rounded_nor_read_in_another_currency_than_it_says(
     )
 
 
+def test_amounts_with_no_currency_anywhere_are_read_in_the_base_currency_and_the_preview_says_so(
+    client: TestClient, world: dict[str, str]
+) -> None:
+    """A forwarder's statement in USD with no currency column was read as EUR without a word."""
+    header = "Date du coût;Prestataire;N° facture;Libellé;Montant HT;N° conteneur"
+    job = upload(client, ledger(
+        "12/03/2026;X;F-1;THC;285,00;MSCU4821994",
+        "12/03/2026;X;F-2;Fret maritime;3 000,00;MSCU4821994",
+        header=header,
+    ))  # fmt: skip
+    (assumed,) = [w for w in preview(client, job)["warnings"] if w["code"] == "CURRENCY_ASSUMED"]
+    assert (assumed["field"], assumed["params"]) == ("currency", {"currency": "EUR", "rows": 2})
+
+    # a currency the file states, in a column or in the amount's own header, is no assumption
+    header_eur = "Date du coût;Prestataire;N° facture;Libellé;Montant HT (EUR);N° conteneur"
+    job = upload(client, ledger("12/03/2026;X;F-3;THC;285,00;MSCU4821994", header=header_eur))
+    job["mapping"]["amount"] = "Montant HT (EUR)"
+    assert "CURRENCY_ASSUMED" not in [w["code"] for w in preview(client, job)["warnings"]]
+
+
 def test_lines_of_one_invoice_on_several_days_are_one_cost_dated_and_converted_on_the_first(
     client: TestClient, world: dict[str, str]
 ) -> None:

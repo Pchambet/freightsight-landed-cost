@@ -77,9 +77,9 @@ def default_method(
     rates = [ld.duty_rate for ld in loads]
     if not loads or any(rate is None for rate in rates) or not any(rate and rate > 0 for rate in rates):
         return AllocationMethod.BY_CIF_VALUE
-    theoretical = sum(
-        ((ld.duty_rate or Decimal(0)) * comp.result.cif.get(ld.id, ld.fob) for ld in loads), Decimal(0)
-    )
+    if not all(ld.value_known for ld in loads):
+        return AllocationMethod.BY_CIF_VALUE  # no customs value to check the rates against
+    theoretical = sum(((ld.duty_rate or Decimal(0)) * comp.result.cif[ld.id] for ld in loads), Decimal(0))
     if amount_base is not None:
         # Customs may bill a box's duty in two goes; the rates explain what was paid in all, so the
         # invoiced duty already on these lines counts with this one. An estimate does not: this very

@@ -19,7 +19,8 @@ from sqlalchemy.orm import Session
 
 from app.core.money import q2, q4
 from app.domain.costing.engine import EXCLUDED_FROM_LANDED
-from app.domain.costing.service import Computation
+from app.domain.costing.service import Computation, charged_containers
+from app.domain.costing.value import FX_RATE_MISSING, coefficient, missing_code, total
 from app.domain.models import CostStatus, Organization, Product
 from app.domain.reporting.service import arrival_date
 from app.domain.search.service import fold
@@ -39,14 +40,18 @@ class SkuArrival:
     #: The date is a plan (the shipment's ETA), not a discharge or an arrival on record.
     arrival_is_estimate: bool
     quantity: Decimal
-    fob: Decimal
-    landed: Decimal
-    unit_fob: Decimal
-    unit_landed: Decimal
+    #: None, with `landed` and the unit figures, when the order has no exchange rate (`fob_missing`).
+    fob: Decimal | None
+    #: None, with `unit_landed`, too when its container carries no charge (`without_charge`).
+    landed: Decimal | None
+    unit_fob: Decimal | None
+    unit_landed: Decimal | None
     by_cost_type: dict[str, Decimal]
     unit_by_cost_type: dict[str, Decimal]
     #: The part of `landed` that still rests on estimates rather than invoices.
     estimated: Decimal
+    fob_missing: str | None = None
+    without_charge: bool = False
 
 
 @dataclass
@@ -59,13 +64,16 @@ class SkuBox:
     arrived_on: date | None
     arrival_is_estimate: bool
     quantity: Decimal
-    fob: Decimal
-    landed: Decimal
-    unit_fob: Decimal
-    unit_landed: Decimal
+    fob: Decimal | None
+    landed: Decimal | None
+    unit_fob: Decimal | None
+    unit_landed: Decimal | None
     by_cost_type: dict[str, Decimal]
     unit_by_cost_type: dict[str, Decimal]
     estimated: Decimal
+    fob_missing: str | None = None
+    fob_missing_lines: int = 0
+    without_charge: bool = False
 
 
 @dataclass
@@ -73,10 +81,16 @@ class SkuSummary:
     sku: str
     description: str | None = None
     quantity: Decimal = Decimal(0)
-    fob: Decimal = ZERO
-    landed: Decimal = ZERO
-    unit_fob: Decimal = Decimal(0)
-    unit_landed: Decimal = Decimal(0)
+    #: None, with `landed`, the unit figures and the margins, while one of its lines has no value.
+    fob: Decimal | None = ZERO
+    #: Over the containers that carry a charge, and the value and quantity of what they carried: a
+    #: container with none is in `quantity` and `fob`, in no landed figure (`containers_without_charge`).
+    landed: Decimal | None = ZERO
+    charged_fob: Decimal | None = ZERO
+    charged_quantity: Decimal = Decimal(0)
+    unit_fob: Decimal | None = Decimal(0)
+    unit_landed: Decimal | None = Decimal(0)
+    coefficient: Decimal | None = None
     last_unit_landed: Decimal | None = None
     previous_unit_landed: Decimal | None = None
     change_pct: Decimal | None = None
@@ -85,6 +99,8 @@ class SkuSummary:
     has_estimates: bool = False
     product_id: UUID | None = None
     sale_price: Decimal | None = None
+    #: A selling price above 0 in the books' currency: a margin is due, even while it cannot be told.
+    priced: bool = False
     margin_unit: Decimal | None = None
     margin_pct: Decimal | None = None
     #: The same two, against the last container that landed: the stock about to be sold.
@@ -92,6 +108,14 @@ class SkuSummary:
     last_margin_pct: Decimal | None = None
     points: list[SkuArrival] = field(default_factory=list)
     boxes: list[SkuBox] = field(default_factory=list)
+    fob_missing: str | None = None
+    fob_missing_lines: int = 0
+    containers_without_charge: int = 0
+
+    @property
+    def charged(self) -> bool:
+        """At least one of its containers carries a charge: there is a landed cost to tell."""
+        return any(not point.without_charge for point in self.points)
 
 
 def sku_report(
@@ -115,6 +139,7 @@ def sku_report(
         if cost.status is CostStatus.ESTIMATE:
             estimated[allocation.load_id] += allocation.amount_base
 
+    charged = charged_containers(comp)
     summaries: dict[str, SkuSummary] = {}
     for load in comp.loads:
         row = comp.load_rows[load.id]
@@ -129,7 +154,8 @@ def sku_report(
             continue
 
         by_type = {k: q2(v) for k, v in sorted(per_load.get(load.id, {}).items())}
-        landed = load.fob + sum(by_type.values(), ZERO)
+        uncharged = container.id not in charged
+        landed = None if load.fob is None or uncharged else load.fob + sum(by_type.values(), ZERO)
         order = row.po_line.purchase_order
         summary = summaries.setdefault(sku, SkuSummary(sku=sku))
         # The most complete description seen names the article.
@@ -146,13 +172,15 @@ def sku_report(
                 arrived_on=landed_on,
                 arrival_is_estimate=container.discharged_at is None and container.ata is None,
                 quantity=load.quantity,
-                fob=q2(load.fob),
-                landed=q2(landed),
+                fob=load.fob,
+                landed=None if landed is None else q2(landed),
                 unit_fob=_per_unit(load.fob, load.quantity),
                 unit_landed=_per_unit(landed, load.quantity),
                 by_cost_type=by_type,
-                unit_by_cost_type={k: _per_unit(v, load.quantity) for k, v in by_type.items()},
+                unit_by_cost_type={k: _known_per_unit(v, load.quantity) for k, v in by_type.items()},
                 estimated=q2(estimated.get(load.id, ZERO)),
+                fob_missing=None if load.value_known else FX_RATE_MISSING,
+                without_charge=uncharged,
             )
         )
 
@@ -175,8 +203,9 @@ def sku_report(
 
 def _box(points: list[SkuArrival]) -> SkuBox:
     quantity = sum((p.quantity for p in points), Decimal(0))
-    fob = sum((p.fob for p in points), ZERO)
-    landed = sum((p.landed for p in points), ZERO)
+    fob = total(p.fob for p in points)
+    landed = total(p.landed for p in points)
+    missing = sum(1 for p in points if p.fob_missing)
     by_type: dict[str, Decimal] = defaultdict(lambda: ZERO)
     for point in points:
         for cost_type, amount in point.by_cost_type.items():
@@ -188,30 +217,49 @@ def _box(points: list[SkuArrival]) -> SkuBox:
         arrived_on=first.arrived_on,
         arrival_is_estimate=first.arrival_is_estimate,
         quantity=quantity,
-        fob=q2(fob),
-        landed=q2(landed),
+        fob=None if fob is None else q2(fob),
+        landed=None if landed is None else q2(landed),
         unit_fob=_per_unit(fob, quantity),
         unit_landed=_per_unit(landed, quantity),
         by_cost_type=dict(sorted(by_type.items())),
-        unit_by_cost_type={k: _per_unit(v, quantity) for k, v in sorted(by_type.items())},
+        unit_by_cost_type={k: _known_per_unit(v, quantity) for k, v in sorted(by_type.items())},
         estimated=q2(sum((p.estimated for p in points), ZERO)),
+        fob_missing=missing_code(missing),
+        fob_missing_lines=missing,
+        without_charge=first.without_charge,
     )
 
 
-def _per_unit(amount: Decimal, quantity: Decimal) -> Decimal:
+def _per_unit(amount: Decimal | None, quantity: Decimal) -> Decimal | None:
+    return None if amount is None else _known_per_unit(amount, quantity)
+
+
+def _known_per_unit(amount: Decimal, quantity: Decimal) -> Decimal:
     return q4(amount / quantity) if quantity else Decimal(0)
 
 
 def _summarise(summary: SkuSummary, product: Product | None, org: Organization) -> None:
     summary.points.sort(key=lambda p: (p.arrived_on is None, p.arrived_on or date.max, p.container_number))
     quantity = sum((p.quantity for p in summary.points), Decimal(0))
-    fob = sum((p.fob for p in summary.points), ZERO)
-    landed = sum((p.landed for p in summary.points), ZERO)
-    summary.quantity, summary.fob, summary.landed = quantity, q2(fob), q2(landed)
+    fob = total(p.fob for p in summary.points)
+    summary.quantity = quantity
+    summary.fob = None if fob is None else q2(fob)
+    summary.fob_missing_lines = sum(1 for p in summary.points if p.fob_missing)
+    summary.fob_missing = missing_code(summary.fob_missing_lines)
+    charged = [p for p in summary.points if not p.without_charge]
+    charged_quantity = sum((p.quantity for p in charged), Decimal(0))
+    landed = total(p.landed for p in charged) if charged else None
+    charged_fob = total(p.fob for p in charged) if charged else None
+    summary.landed = None if landed is None else q2(landed)
+    summary.charged_fob = None if charged_fob is None else q2(charged_fob)
+    summary.charged_quantity = charged_quantity
+    summary.coefficient = coefficient(landed, charged_fob)
     # Weighted by quantity: the same article landed twice at two costs is one number, not their mean.
-    summary.unit_fob, summary.unit_landed = _per_unit(fob, quantity), _per_unit(landed, quantity)
+    summary.unit_fob = _per_unit(fob, quantity)
+    summary.unit_landed = _per_unit(landed, charged_quantity)
     summary.has_estimates = any(p.estimated > 0 for p in summary.points)
     summary.arrivals = len({p.container_id for p in summary.points})
+    summary.containers_without_charge = len({p.container_id for p in summary.points if p.without_charge})
 
     grouped: dict[UUID, list[SkuArrival]] = defaultdict(list)
     for point in summary.points:
@@ -220,15 +268,21 @@ def _summarise(summary: SkuSummary, product: Product | None, org: Organization) 
     summary.boxes.sort(key=lambda b: (b.arrived_on is None, b.arrived_on or date.max, b.container_number))
 
     # "Last" and "previous" are containers that have landed: a box still at sea has an estimate of a
-    # cost, and comparing it with an invoiced one would announce a variation nobody has paid yet.
-    landed_boxes = [b for b in summary.boxes if b.arrived_on is not None and not b.arrival_is_estimate]
+    # cost, and comparing it with an invoiced one would announce a variation nobody has paid yet. A
+    # box with no charge has no landed cost to compare either.
+    landed_boxes = [
+        b
+        for b in summary.boxes
+        if b.arrived_on is not None and not b.arrival_is_estimate and not b.without_charge
+    ]
     if landed_boxes:
         summary.last_unit_landed = landed_boxes[-1].unit_landed
         summary.last_arrival_on = landed_boxes[-1].arrived_on
-    if len(landed_boxes) >= 2 and landed_boxes[-2].unit_landed:
+    if len(landed_boxes) >= 2 and landed_boxes[-2].unit_landed != 0:
         before, after = landed_boxes[-2].unit_landed, landed_boxes[-1].unit_landed
         summary.previous_unit_landed = before
-        summary.change_pct = ((after - before) / before * 100).quantize(Decimal("0.1"))
+        if before is not None and after is not None:
+            summary.change_pct = ((after - before) / before * 100).quantize(Decimal("0.1"))
 
     if product is None:
         return
@@ -238,12 +292,16 @@ def _summarise(summary: SkuSummary, product: Product | None, org: Organization) 
         summary.sale_price = product.sale_price
         return
     summary.sale_price = product.sale_price
-    summary.margin_unit = q4(product.sale_price - summary.unit_landed)
+    summary.priced = product.sale_price > 0
+    if summary.unit_landed is not None:
+        summary.margin_unit = q4(product.sale_price - summary.unit_landed)
     if summary.last_unit_landed is not None:
         summary.last_margin_unit = q4(product.sale_price - summary.last_unit_landed)
-    if product.sale_price:
+    if not product.sale_price:
+        return
+    if summary.margin_unit is not None:
         summary.margin_pct = (summary.margin_unit / product.sale_price * 100).quantize(Decimal("0.1"))
-        if summary.last_margin_unit is not None:
-            summary.last_margin_pct = (summary.last_margin_unit / product.sale_price * 100).quantize(
-                Decimal("0.1")
-            )
+    if summary.last_margin_unit is not None:
+        summary.last_margin_pct = (summary.last_margin_unit / product.sale_price * 100).quantize(
+            Decimal("0.1")
+        )

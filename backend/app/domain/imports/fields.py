@@ -44,6 +44,10 @@ FIELDS: dict[ImportKind, tuple[Field, ...]] = {
         Field("unit_price", "Prix unitaire", "Unit price", required=True),
         Field("unit_weight_kg", "Poids unitaire (kg)", "Unit weight (kg)"),
         Field("unit_volume_cbm", "Volume unitaire (m³)", "Unit volume (m3)"),
+        # An order export as often states the weight of the whole line: mapped here, it is divided by
+        # the line's quantity, so the person says which it is instead of the reader guessing.
+        Field("line_weight_kg", "Poids total de la ligne (kg)", "Line total weight (kg)"),
+        Field("line_volume_cbm", "Volume total de la ligne (m³)", "Line total volume (m3)"),
         Field("hs_code", "Code SH", "HS code"),
         Field("duty_rate", "Taux de droits", "Duty rate"),
         Field("container_number", "N° conteneur", "Container number"),

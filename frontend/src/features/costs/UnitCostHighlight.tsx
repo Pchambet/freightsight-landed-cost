@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getLocale, getTranslations } from "next-intl/server";
 import { Card } from "@/components/layout/AppShell";
+import { FobMissingLine } from "@/features/report/FobMissing";
 import { skuHref } from "@/features/skus/href";
 import type { LandedCostReport } from "@/lib/api/client";
 import { qty, unitCost } from "@/lib/format";
@@ -19,7 +20,11 @@ export default async function UnitCostHighlight({ report }: { report: LandedCost
     >
       <ul className="divide-y divide-slate-100">
         {report.lines.map((ln) => {
-          const fobUnit = Number(ln.quantity) > 0 ? Number(ln.fob) / Number(ln.quantity) : null;
+          // An order with no exchange rate: no value, so no unit cost either side of the arrow.
+          const unvalued = ln.fob === null || ln.unit_landed_cost === null;
+          const fobUnit = !unvalued && Number(ln.quantity) > 0 ? Number(ln.fob) / Number(ln.quantity) : null;
+          // With no charge on its container, the line's "landed" cost is its FOB: not a figure to sell from.
+          const noCharge = ln.without_charge;
           return (
             <li key={ln.load_id} className="px-5 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <div className="min-w-0">
@@ -41,9 +46,10 @@ export default async function UnitCostHighlight({ report }: { report: LandedCost
                 <div className="text-slate-300 text-xl" aria-hidden>→</div>
                 <div className="text-right">
                   <div className="text-xs uppercase tracking-wider text-emerald-700">{t("landedUnit")}</div>
-                  <div className="text-2xl font-bold tabular-nums text-emerald-800">
-                    {unitCost(ln.unit_landed_cost, report.base_currency, locale)}
+                  <div className={`text-2xl font-bold tabular-nums ${noCharge ? "text-slate-400" : "text-emerald-800"}`}>
+                    {noCharge || ln.unit_landed_cost === null ? "—" : unitCost(ln.unit_landed_cost, report.base_currency, locale)}
                   </div>
+                  {unvalued ? <FobMissingLine href={`/purchase-orders/${ln.po_id}#taux`} /> : noCharge ? <div className="text-[11px] text-slate-500">{t("noCharge")}</div> : Number(ln.estimated) > 0 ? <div className="text-[11px] font-medium text-violet-800">{t("partlyEstimated")}</div> : null}
                 </div>
               </div>
             </li>

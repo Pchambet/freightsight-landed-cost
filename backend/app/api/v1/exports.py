@@ -28,6 +28,7 @@ from app.core.tenancy import TenantDep
 from app.domain.costing import report as rpt
 from app.domain.costing.engine import EXCLUDED_FROM_LANDED
 from app.domain.costing.service import compute
+from app.domain.costing.value import missing_code, total
 from app.domain.labels import VALUES_FR, finding_details_fr, header_fr
 from app.domain.models import (
     Container,
@@ -177,6 +178,8 @@ def landed_costs_csv(
         "import_vat",
         "landed",
         "unit_landed_cost",
+        # Why the three cells before are empty: a line with no value is never written as 0.
+        "fob_missing",
         *cost_types,
         "unallocated",
         "unallocated_reason",
@@ -211,6 +214,7 @@ def landed_costs_csv(
                 # Four decimals here and two on screen: this is the file people multiply by a
                 # quantity, and rounding a unit cost before that multiplication loses euros.
                 number(ln.unit_landed_cost, mark, 4),
+                ln.fob_missing or "",
                 *[number(ln.by_cost_type.get(ct), mark) for ct in cost_types],
                 "",
                 "",
@@ -230,6 +234,7 @@ def landed_costs_csv(
                 "",
                 "",
                 f"{cost.cost_type.value} {cost.invoice_number or ''} {cost.cost_date.isoformat()}".strip(),
+                "",
                 "",
                 "",
                 "",
@@ -558,7 +563,7 @@ def sku_costs_csv(
     (Sage, EBP, Odoo all map columns), and no vendor format is invented here."""
     _, mark = dialect(locale)
     header = ["sku", "description", "unit_landed_cost", "cost_basis", "quantity", "currency",
-              "arrival_date", "containers", "period", "period_status"]  # fmt: skip
+              "arrival_date", "containers", "period", "period_status", "fob_missing"]  # fmt: skip
     closed = (
         t.db.scalar(
             t.q(PeriodClose).where(PeriodClose.period == period).options(selectinload(PeriodClose.lines))
@@ -569,9 +574,16 @@ def sku_costs_csv(
 
     def from_close() -> Iterator[list[Any]]:
         assert closed is not None
+        # The live rule (`charged_containers`) read on the frozen lines: a box none of whose lines bore a
+        # landed charge gives no cost price, whether its month is closed or not.
+        charged = {
+            ln.container_id
+            for ln in closed.lines
+            if any(Decimal(str(v)) for k, v in ln.by_cost_type.items() if k not in EXCLUDED_FROM_LANDED)
+        }
         articles: dict[str, list[Any]] = {}
         for line in closed.lines:
-            if line.sku:
+            if line.sku and line.container_id in charged:
                 articles.setdefault(line.sku, []).append(line)
         for sku, lines in sorted(articles.items()):
             last_day = max((ln.arrived_on for ln in lines if ln.arrived_on), default=None)
@@ -591,22 +603,28 @@ def sku_costs_csv(
                 " ".join(sorted({ln.container_number for ln in kept})),
                 period,
                 "closed",
+                "",  # a month is closed only with every line's value known
             ]
 
     def live() -> Iterator[list[Any]]:
         start, end = (month_start(period), periods.month_end(period)) if period else (None, None)
         found = sku_report(t.db, compute(t.db, t.org), t.org, period_from=start, period_to=end)
         for article in found:
-            boxes = [b for b in article.boxes if not b.arrival_is_estimate]
+            # Nothing has landed: a cost price is not updated from a plan. Nor from a box with no
+            # charge, whose "cost price" would be its purchase price.
+            boxes = [b for b in article.boxes if not b.arrival_is_estimate and not b.without_charge]
             if not boxes:
-                continue  # nothing has landed: a cost price is not updated from a plan
+                continue
             kept = boxes[-1:] if basis == "last" else boxes
             quantity = sum((b.quantity for b in kept), Decimal(0))
-            landed = sum((b.landed for b in kept), Decimal(0))
+            landed = total(b.landed for b in kept)
+            # An article part of whose value is unknown gets no cost price, rather than one worked
+            # out over its other lines; `fob_missing` says why the cell is empty.
+            unit = None if landed is None else landed / quantity if quantity else Decimal(0)
             yield [
                 article.sku,
                 article.description,
-                number(landed / quantity if quantity else Decimal(0), mark, 4),
+                number(unit, mark, 4),
                 basis,
                 number(quantity, mark, 4),
                 t.org.base_currency,
@@ -614,6 +632,7 @@ def sku_costs_csv(
                 " ".join(sorted({b.container_number for b in kept})),
                 period,
                 "open" if period else None,
+                missing_code(sum(b.fob_missing_lines for b in kept)) or "",
             ]
 
     name = f"freightsight-prix-de-revient-{period or 'tout'}.csv"
