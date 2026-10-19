@@ -2,15 +2,15 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
 import Link from "next/link";
-import { AlertTriangle, Box, FileText, Info, LockKeyhole } from "lucide-react";
+import { Box, FileText, Info, LockKeyhole } from "lucide-react";
 import { PageHeader, btnSecondary } from "@/components/layout/AppShell";
 import Breadcrumb from "@/components/shared/Breadcrumb";
 import CollapsibleSection from "@/components/shared/CollapsibleSection";
 import { MilestoneBadge, RiskBadge } from "@/components/shared/Badges";
-import { Money } from "@/components/shared/Money";
 import AllocationPanel from "@/features/costs/AllocationPanel";
 import CostBreakdown from "@/features/costs/CostBreakdown";
 import ReportTotals from "@/features/costs/ReportTotals";
+import UnallocatedWarnings from "@/features/costs/UnallocatedWarnings";
 import FobMissing from "@/features/report/FobMissing";
 import UnitCostHighlight from "@/features/costs/UnitCostHighlight";
 import CostLedger from "@/features/costs/CostLedger";
@@ -117,20 +117,7 @@ export default async function ContainerPage({ params }: Params) {
 
       <WorkflowNextStep step={step} />
 
-      {report.warnings.length > 0 ? (
-        <div className="rounded-md border border-amber-200 bg-amber-50 text-amber-800 text-sm px-4 py-3 space-y-1 mb-6">
-          {report.warnings.map((w) => (
-            <div key={w.cost_id} className="flex gap-2">
-              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-              <span>
-                {errorCode.has(w.code) ? errorCode(w.code) : w.message}
-                {w.load_labels?.length ? <span className="text-amber-700/80"> {w.load_labels.join(", ")}</span> : null}
-                {" ("}<Money amount={w.amount_base} currency={cur} /> {t("unallocatedSuffix")}{")"}
-              </span>
-            </div>
-          ))}
-        </div>
-      ) : null}
+      <UnallocatedWarnings report={report} />
 
       {/* `report.notes`: a rule applied to a cost that WAS allocated (e.g. duty spread on customs
           value for lines with no tariff rate) — kept apart from `warnings` on purpose, since a note

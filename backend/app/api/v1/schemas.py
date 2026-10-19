@@ -45,6 +45,17 @@ Rate = Annotated[
 Pct = Annotated[Decimal, PlainSerializer(lambda d: f"{d:.2f}", return_type=str, when_used="json")]
 
 
+def _measure(d: Decimal) -> str:
+    """Four decimals, as every quantity, and more when the stored figure has them."""
+    whole, _, digits = f"{d:.16f}".partition(".")
+    return f"{whole}.{digits.rstrip('0').ljust(4, '0')}"
+
+
+#: A per-unit weight or volume, with every digit stored: 0.00012 kg of a part shipped two million at a
+#: time is 240 kg, and four decimals read it as 0.0001.
+Measure = Annotated[Decimal, PlainSerializer(_measure, return_type=str, when_used="json")]
+
+
 def currency_code(v: str) -> str:
     v = v.strip().upper()
     if len(v) != 3 or not v.isalpha():
@@ -198,8 +209,8 @@ class PoLineResponse(BaseModel):
     hs_code: str | None
     quantity: Qty
     unit_price: Qty
-    unit_weight_kg: Qty | None
-    unit_volume_cbm: Qty | None
+    unit_weight_kg: Measure | None
+    unit_volume_cbm: Measure | None
     duty_rate: Rate | None
 
 
@@ -247,6 +258,14 @@ class PurchaseOrderResponse(BaseModel):
     #: Null when no rate could be had for the order's currency: its value is missing until one is set.
     fx_rate: Rate | None
     fx_date: date | None
+    #: Where the rate came from: ecb, ecb_latest, manual, import, same. Null on an order written before
+    #: it was recorded — a foreign one at a rate of 1 with no date is to be checked
+    #: (`rate_unconfirmed`) — and on one with no rate.
+    fx_source: str | None = None
+    #: A foreign-currency order at a rate of exactly 1, with no date and no source: what the import
+    #: wrote when it had no rate, before a missing rate was left empty. Its value may be wrong until a
+    #: person confirms or sets the rate.
+    rate_unconfirmed: bool = False
     incoterm: Incoterm | None
     order_date: date | None
     status: PurchaseOrderStatus
@@ -507,6 +526,49 @@ class CostResponse(BaseModel):
     closed_at: datetime | None
     close_reason: str | None
     created_at: datetime
+    #: What the credits below took off `amount`: the amount invoiced is `amount + credited`.
+    credited: Money
+    credits: list[CostCreditResponse] = Field(default_factory=list)
+
+
+class CostCreditResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    amount: Money
+    credit_number: str | None
+    vendor: str | None
+    credit_date: date
+    #: The credit note it was read from; null when it was entered by hand.
+    invoice_id: UUID | None
+    created_by: UUID | None
+    created_at: datetime
+
+
+class CostCreditCreate(BaseModel):
+    """A refund entered by hand on an invoiced cost: a credit note, a discount granted afterwards."""
+
+    amount: Decimal = Field(gt=0, max_digits=14, decimal_places=2)
+    #: The cost's own when left out; another one is refused, never converted.
+    currency: str | None = None
+    credit_number: str | None = Field(default=None, max_length=64)
+    #: The cost's forwarder when left out.
+    vendor: str | None = Field(default=None, max_length=200)
+    credit_date: date
+
+    @field_validator("currency")
+    @classmethod
+    def _cur(cls, v: str | None) -> str | None:
+        return None if v is None else currency_code(v)
+
+    @field_validator("vendor")
+    @classmethod
+    def _blank(cls, v: str | None) -> str | None:
+        return none_if_blank(v)
+
+    @field_validator("credit_number")
+    @classmethod
+    def _number(cls, v: str | None) -> str | None:
+        return number_or_none(v)
 
 
 class CostClose(BaseModel):
@@ -572,6 +634,11 @@ class ReportLine(BaseModel):
     #: The line's container carries no charge at all, estimated or invoiced: `landed` is only its
     #: FOB, and every summary leaves it out of its landed figures.
     without_charge: bool = False
+    #: Of those, a container whose charges ARE entered but could not be placed — most often spread on
+    #: value while an order has no exchange rate: not "no charge", and `held_orders` names the orders
+    #: whose missing rate holds them (empty when something else does; the warnings say what).
+    charges_held: bool = False
+    held_orders: list[str] = Field(default_factory=list)
 
 
 class LandedCostReport(BaseModel):
@@ -584,9 +651,23 @@ class LandedCostReport(BaseModel):
     """
 
     base_currency: str
-    #: fob, allocated, vat, landed, unallocated, estimated, actual, variance, matched_estimated,
-    #: matched_actual, unforecast_actual. `fob` and `landed` are null while `fob_missing` says why.
+    #: fob, allocated, vat, landed, charged_fob, unallocated, estimated, actual, variance,
+    #: matched_estimated, matched_actual, unforecast_actual, unallocated_actual (the invoiced part of
+    #: `unallocated`, import VAT excluded: invoiced, not placed), invoiced (actual + unallocated_actual:
+    #: everything invoiced on this scope, placed or not). `fob` is every line's goods, charged or
+    #: not. `landed` is over the lines whose container carries a charge, and `charged_fob` their goods:
+    #: a container with no charge at all (its lines' `without_charge`) would only add its FOB, so it is
+    #: left out of both and counted in `containers_without_charge`. `landed` and `charged_fob` are null
+    #: when none carries a charge. `fob` and `landed` are null while `fob_missing` says why. A report
+    #: frozen into a link before `charged_fob` existed counted every line in `landed`.
     totals: dict[str, Money | None]
+    #: landed / charged_fob, four decimals. Null when either is.
+    coefficient: Qty | None = None
+    containers_without_charge: int = 0
+    #: Of `containers_without_charge`, those whose charges are entered but held (`ReportLine.charges_held`),
+    #: and the orders whose missing exchange rate holds them, by number.
+    containers_held: int = 0
+    held_orders: list[str] = Field(default_factory=list)
     #: Every figure built on the goods' value, here and on every report, overview, list and export,
     #: is null rather than computed as if a line with no value were worth 0: `fob_missing` says why
     #: (FX_RATE_MISSING: an order has no exchange rate) and `fob_missing_lines` how many lines.
@@ -725,6 +806,8 @@ class ImportReport(BaseModel):
     lines_updated: int | None = None
     suppliers_created: int | None = None
     loads_updated: int | None = None
+    #: PURCHASE_ORDERS: the file's orders in a foreign currency still without an exchange rate.
+    orders_without_rate: list[str] | None = None
     # PURCHASE_ORDERS, CONTAINERS
     containers_created: int | None = None
     loads_created: int | None = None
@@ -953,11 +1036,31 @@ class InvoiceLineResponse(BaseModel):
     accepted: bool
     notes: str | None
     cost_id: UUID | None
+    #: This line refunds rather than charges, as things stand: confirmed, it reduces an invoiced cost.
+    refund: bool = False
+    #: The invoiced cost it reduces — named by a person, or written there by the confirmation.
+    credit_cost_id: UUID | None = None
+    #: On a refund line with a type and a target: the invoiced costs of that type on that target it
+    #: can reduce, any currency (another one is refused at confirmation, and said).
+    credit_candidates: list[CreditCandidate] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _band(self) -> InvoiceLineResponse:
         self.confidence_band = confidence_band(self.confidence)
         return self
+
+
+class CreditCandidate(BaseModel):
+    """An invoiced cost a refund line can reduce, as the review screen names it."""
+
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    #: What it still amounts to, after the credits it already carries.
+    amount: Money
+    currency: str
+    vendor: str | None
+    invoice_number: str | None
+    cost_date: date
 
 
 class InvoiceSummary(BaseModel):
@@ -991,26 +1094,40 @@ class InvoiceSummary(BaseModel):
 
 
 class InvoiceResponse(InvoiceSummary):
+    #: Read as a credit note: every accepted line reduces an invoiced cost instead of adding one.
+    credit_note: bool = False
     lines: list[InvoiceLineResponse] = Field(default_factory=list)
     document_url: str  # this API's own route; the bytes never come from a storage URL
     notes: list[str] = Field(default_factory=list)
 
 
+def _a_line_amount(v: Decimal | None) -> Decimal | None:
+    """A line of an invoice is a charge or, with its minus sign, a refund — never nothing."""
+    if v is not None and v == 0:
+        raise ValueError("A line's amount cannot be zero")
+    return v
+
+
 class InvoiceLineUpdate(BaseModel):
     """A correction made by a person. Everything is optional; nothing is inferred."""
 
-    amount: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
+    #: Negative on a refund line, as printed: the screen sends the line back whole, sign included.
+    amount: Decimal | None = Field(default=None, max_digits=14, decimal_places=2)
     currency: str | None = None
     cost_type: CostType | None = None
     scope: CostScope | None = None
     target_id: UUID | None = None
     accepted: bool | None = None
     description: str | None = None
+    #: On a refund line, the invoiced cost it reduces. Checked at confirmation, with the rest.
+    credit_cost_id: UUID | None = None
 
     @field_validator("currency")
     @classmethod
     def _currency(cls, v: str | None) -> str | None:
         return None if v is None else currency_code(v)
+
+    _amount = field_validator("amount")(_a_line_amount)
 
 
 class InvoiceLineDecision(InvoiceLineUpdate):
@@ -1056,7 +1173,8 @@ class InvoiceLineCreate(BaseModel):
     """
 
     description: str = Field(default="", max_length=500)
-    amount: Decimal = Field(gt=0, max_digits=14, decimal_places=2)
+    #: Negative for a refund the reading missed on a credit note printed with minus signs.
+    amount: Decimal = Field(max_digits=14, decimal_places=2)
     currency: str | None = None  # the invoice's own, when not stated
     cost_type: CostType | None = None
     scope: CostScope | None = None
@@ -1066,6 +1184,8 @@ class InvoiceLineCreate(BaseModel):
     @classmethod
     def _currency(cls, v: str | None) -> str | None:
         return None if v is None else currency_code(v)
+
+    _amount = field_validator("amount")(_a_line_amount)
 
 
 class InvoiceConfirmRequest(BaseModel):
@@ -1091,6 +1211,9 @@ class InvoiceConfirmResponse(BaseModel):
     containers: list[InvoiceContainerLink] = Field(default_factory=list)
     #: Estimates these costs replaced, when exactly one was waiting for them.
     superseded_estimate_ids: list[UUID] = Field(default_factory=list)
+    #: The refunds taken off invoiced costs already on file, and those costs.
+    credits_created: int = 0
+    credited_cost_ids: list[UUID] = Field(default_factory=list)
     #: What the confirmation deliberately did not decide, in plain words.
     notes: list[str] = Field(default_factory=list)
 
@@ -1173,6 +1296,8 @@ class AuditMargin(BaseModel):
     #: Containers of the article with no charge at all: their goods are in none of the figures above,
     #: which measure what the others brought in. An article with nothing else is not listed.
     containers_without_charge: int = 0
+    #: Of those, the ones whose charges are entered but cannot be placed yet: never "no charge".
+    containers_held: int = 0
 
 
 class AuditDemurrageLine(BaseModel):
@@ -1204,6 +1329,8 @@ class AuditCoefficient(BaseModel):
     fob_missing_lines: int = 0
     #: Containers with no charge at all, left out of the three figures above.
     containers_without_charge: int = 0
+    #: Of those, the ones whose charges are entered but held (an order with no exchange rate, most often).
+    containers_held: int = 0
 
 
 class AuditCompleteness(BaseModel):
@@ -1217,6 +1344,8 @@ class AuditCompleteness(BaseModel):
     #: may still change the period's figures.
     invoices_to_review: int
     containers_without_cost: int
+    #: Of those, the ones whose charges are entered but held (an order with no exchange rate, most often).
+    containers_held: int = 0
     #: How many of the period's costs took their exchange rate from each source: ecb, ecb_latest,
     #: manual, same (no conversion).
     fx_sources: dict[str, int]
@@ -1378,7 +1507,8 @@ class ShareCreated(BaseModel):
     path: str
     expires_at: datetime
     #: The landed cost that was frozen, so the sender sees the figure that really left. Null when a
-    #: line of the report has no value (its `fob_missing`): the document says so rather than a figure.
+    #: line of the report has no value (its `fob_missing`), or when no container of it carries a
+    #: charge: the document says so rather than a figure.
     landed: Money | None
     generated_at: datetime
 
@@ -1432,10 +1562,23 @@ class PeriodSummary(BaseModel):
     #: Closed: the frozen figures, which never move again. Open: today's, null while a line has no
     #: value (`fob_missing`); a month holding such a line is not closed.
     containers: int
+    #: Every container's goods, charged or not.
     fob: Money | None
+    #: The landed cost of the containers that carry a charge, and the value of their goods
+    #: (`charged_fob`): a container with no charge at all would only add its FOB, so it is left out of
+    #: both and counted in `containers_without_charge` — the overview's rule for the same month. Null
+    #: when none carries one. A closed month's are read from its frozen lines, which keep their stock
+    #: value (a container with no charge at its FOB) and which containers had no charge.
     landed: Money | None
+    #: landed / charged_fob.
     coefficient: Qty | None
     by_cost_type: dict[str, Money]
+    charged_fob: Money | None = None
+    containers_without_charge: int = 0
+    #: Of `containers_without_charge`, those whose charges are entered but cannot be placed yet, and
+    #: the orders whose missing exchange rate holds them, by number: never "no charge" on a screen.
+    containers_held: int = 0
+    held_orders: list[str] = Field(default_factory=list)
     closed_at: datetime | None = None
     closed_by_name: str | None = None
     #: Today's landed cost of the month (equal to `landed` while it is open): never add `landed` and
@@ -1454,6 +1597,12 @@ class PeriodSummary(BaseModel):
     #: About today's figures (`landed` while open, `live_landed` and the drift once closed).
     fob_missing: str | None = None
     fob_missing_lines: int = 0
+    #: What the month's goods stand at, a container with no charge at its FOB: frozen at the close
+    #: (what went into the accounts; null while open) and today. The drift is measured on this basis:
+    #: on a closed month `frozen_stock + drift == live_stock`, which `landed` and `live_landed` (over
+    #: the charged containers) do not satisfy once a box with no charge at the close gets one.
+    frozen_stock: Money | None = None
+    live_stock: Money | None = None
 
 
 class PeriodEstimatedBox(BaseModel):
@@ -1480,6 +1629,9 @@ class PeriodReadiness(BaseModel):
     invoices_to_review: int
     unallocated_costs: int
     containers_without_cost: int
+    #: Of those, the ones whose charges are entered but held, and the orders whose missing rate holds them.
+    containers_held: int = 0
+    held_orders: list[str] = Field(default_factory=list)
     orders_without_fx_rate: list[PeriodOrder] = Field(default_factory=list)
 
 
@@ -1590,6 +1742,16 @@ class OverviewFigures(BaseModel):
     #: `completeness.estimated` for the same dates.
     estimated: Money
     containers_without_charge: int
+    #: Of `containers_without_charge`, those whose charges are entered but cannot be placed yet, and
+    #: the orders whose missing exchange rate holds them, by number: never "no charge" on a screen.
+    containers_held: int = 0
+    held_orders: list[str] = Field(default_factory=list)
+    #: The known value of the goods of the containers left out: what the fees and the coefficient are
+    #: not over. `uncharged_fob_missing_lines` of their lines have no value and are not in it.
+    uncharged_fob: Money = Decimal("0.00")
+    uncharged_fob_missing_lines: int = 0
+    #: The orders of the period with no exchange rate (`fob_missing`), where the rate is entered.
+    orders_without_fx_rate: list[PeriodOrder] = Field(default_factory=list)
     #: Estimates replaced by an invoice dated in the period, and what the invoices came to.
     variance_estimated: Money
     variance_actual: Money
@@ -1607,6 +1769,12 @@ class OverviewTodo(BaseModel):
     invoices_failed: int
     #: Active containers carrying goods and not one cost, and active containers carrying nothing.
     containers_without_cost: int
+    #: Of those, the ones whose charges are entered but held (an order with no exchange rate, most
+    #: often): their invoice is on file, and must not be asked for again. By number, with the orders
+    #: whose missing rate holds them.
+    containers_held: int = 0
+    held_containers: list[str] = Field(default_factory=list)
+    held_orders: list[PeriodOrder] = Field(default_factory=list)
     containers_without_loads: int
     #: Estimates on containers that have landed and that no invoice has replaced yet.
     estimates_awaiting_invoice: int
@@ -1735,6 +1903,16 @@ class SkuSummary(BaseModel):
     fob_missing: str | None = None
     fob_missing_lines: int = 0
     containers_without_charge: int
+    #: Of `containers_without_charge`, those whose charges are entered but cannot be placed yet, and
+    #: the orders whose missing exchange rate holds them, by number: never "no charge" on a screen.
+    containers_held: int = 0
+    held_orders: list[str] = Field(default_factory=list)
+    #: The quantity and unit purchase price of the goods `unit_landed` is over: those whose container
+    #: carries a charge. `quantity` and `unit_fob` are over every line.
+    charged_quantity: Qty = Decimal(0)
+    unit_charged_fob: Qty | None = None
+    #: Units in containers that have actually landed: a box dated by its ETA is on its way, not received.
+    received_quantity: Qty = Decimal(0)
 
 
 class SkuArrival(BaseModel):
@@ -1760,6 +1938,9 @@ class SkuArrival(BaseModel):
     fob_missing: str | None = None
     #: Its container carries no charge at all: `landed` and `unit_landed` are null.
     without_charge: bool
+    #: Its container's charges are entered but held (see `ReportLine.charges_held`).
+    charges_held: bool = False
+    held_orders: list[str] = Field(default_factory=list)
 
 
 class SkuBox(BaseModel):
@@ -1783,6 +1964,9 @@ class SkuBox(BaseModel):
     fob_missing_lines: int = 0
     #: No charge at all on this container: `landed` and `unit_landed` are null.
     without_charge: bool
+    #: Its container's charges are entered but held (see `ReportLine.charges_held`).
+    charges_held: bool = False
+    held_orders: list[str] = Field(default_factory=list)
 
 
 class SkuListResponse(BaseModel):
@@ -1892,11 +2076,20 @@ class RateCardResponse(BaseModel):
     notes: str | None
 
 
+class EstimateSkip(BaseModel):
+    """Why a cost type got no estimate. `code`: SCOPE_NOT_APPLIED (with `scope`), NEEDS_SHIPMENT,
+    ALREADY_RECORDED, ON_SHIPMENT, ON_SHIPMENT_CONTAINER, NO_BASIS (with `basis`), NO_TARIFF_RATE."""
+
+    code: str
+    scope: CostScope | None = None
+    basis: RateBasis | None = None
+
+
 class EstimateResponse(BaseModel):
     """What applying the rate cards to a container produced, and what it did not."""
 
     created: list[CostResponse]
-    skipped: dict[str, str]  # cost type -> the reason, in plain words
+    skipped: dict[str, EstimateSkip]  # cost type -> why nothing was created
 
 
 # ---------------------------------------------------------------------------- variance report
@@ -2022,6 +2215,17 @@ class ReportBucket(BaseModel):
     #: The part of `landed` still resting on estimates, import VAT excluded.
     estimated: Money
     containers_without_charge: int
+    #: Of `containers_without_charge`, those whose charges are entered but cannot be placed yet, and
+    #: the orders whose missing exchange rate holds them, by number: never "no charge" on a screen.
+    containers_held: int = 0
+    held_orders: list[str] = Field(default_factory=list)
+    #: The lines whose container carries a charge, and their quantity: what `landed` and
+    #: `charged_fob` are over. A row reads its columns on this basis while some of its lines are left out.
+    charged_lines: int = 0
+    charged_quantity: Qty = Decimal(0)
+    #: The known value of the goods left out, and how many of their lines have no value.
+    uncharged_fob: Money = Decimal("0.00")
+    uncharged_fob_missing_lines: int = 0
 
 
 class ReportSkuLine(BaseModel):
@@ -2037,6 +2241,17 @@ class ReportSkuLine(BaseModel):
     fob_missing_lines: int = 0
     estimated: Money
     containers_without_charge: int
+    #: Of `containers_without_charge`, those whose charges are entered but cannot be placed yet, and
+    #: the orders whose missing exchange rate holds them, by number: never "no charge" on a screen.
+    containers_held: int = 0
+    held_orders: list[str] = Field(default_factory=list)
+    #: The quantity and unit purchase price of the same goods as `unit_landed_cost`: the lines whose
+    #: container carries a charge. `quantity` and `fob` are over every line; one row compares like with like.
+    charged_quantity: Qty = Decimal(0)
+    unit_charged_fob: Qty | None = None
+    #: The goods' value of those same lines, what `landed` is over. Null when none is charged or one
+    #: of them has no value.
+    charged_fob: Money | None = None
 
 
 class LandedCostAnalysis(BaseModel):
@@ -2047,6 +2262,8 @@ class LandedCostAnalysis(BaseModel):
     buckets: list[ReportBucket]
     skus: list[ReportSkuLine]
     totals: ReportBucket
+    #: The orders of the period with no exchange rate (`totals.fob_missing`), where the rate is entered.
+    orders_without_fx_rate: list[PeriodOrder] = Field(default_factory=list)
 
 
 class DndReportLine(BaseModel):
@@ -2127,12 +2344,31 @@ class ErpBlocker(BaseModel):
     blocking: bool = True
 
 
+class ErpByHandEntered(BaseModel):
+    """A person says the difference shown on a cost is entered by hand in the ERP: the one shown, signed."""
+
+    cost_id: UUID
+    difference: Decimal = Field(max_digits=14, decimal_places=2)
+
+
 class ErpPlannedLine(BaseModel):
     move_id: int
     product_name: str
     sku: str | None
     quantity: Qty
     amount: Money
+
+
+class ErpByHand(BaseModel):
+    """A difference from a validated document that is not written for want of its split per receipt
+    line: a person enters it in the ERP."""
+
+    #: The validated document that holds the cost.
+    existing: str
+    #: What that document holds of it, in the customer's books.
+    held: Money
+    #: Our figure less what it holds: the adjustment to enter by hand.
+    difference: Money
 
 
 class ErpPlannedCost(BaseModel):
@@ -2146,6 +2382,9 @@ class ErpPlannedCost(BaseModel):
     #: Which push that was. The document's name does not identify it — several documents on one
     #: container can share a name — and this is what "forget this push" needs.
     pushed_push_id: UUID | None = None
+    #: Set when the cost has changed since a validated document took it and the difference has to be
+    #: entered by hand. Such a cost is neither carried nor pushed: their books hold the old figure.
+    by_hand: ErpByHand | None = None
 
 
 class ErpLandedCostPreview(BaseModel):

@@ -26,12 +26,12 @@ DEFAULT_LOCALE = "fr"
 
 MESSAGES: dict[str, dict[str, str]] = {
     "fr": {
-        "DND_RISK.title": "{container} : risque de surestaries {risk}",
-        "DND_RISK.titleRunning": "{container} : surestaries en cours",
-        "DND_RISK.titleRunningAmount": "{container} : surestaries en cours, {amount}",
-        "DND_RISK.titleDetention": "{container} : risque de détention {risk}",
-        "DND_RISK.titleDetentionRunning": "{container} : détention en cours",
-        "DND_RISK.titleDetentionRunningAmount": "{container} : détention en cours, {amount}",
+        "DND_RISK.title": "{container}\u00a0: risque de surestaries {risk}",
+        "DND_RISK.titleRunning": "{container}\u00a0: surestaries en cours",
+        "DND_RISK.titleRunningAmount": "{container}\u00a0: surestaries en cours, {amount}",
+        "DND_RISK.titleDetention": "{container}\u00a0: risque de détention {risk}",
+        "DND_RISK.titleDetentionRunning": "{container}\u00a0: détention en cours",
+        "DND_RISK.titleDetentionRunningAmount": "{container}\u00a0: détention en cours, {amount}",
         "DND_RISK.body": "Dernier jour franc le {lfd}.",
         "DND_RISK.bodyRunning": "Le dernier jour franc était le {lfd}. Les surestaries courent.",
         "DND_RISK.bodyRunningDays.one": (
@@ -56,9 +56,9 @@ MESSAGES: dict[str, dict[str, str]] = {
         "DND_RISK.amount": "{amount} à ce jour, {rate} par jour.",
         "DND_RISK.noRate": "Ajoutez un tarif journalier dans vos réglages pour voir le montant.",
         "DND_RISK.portUnconfirmed": (
-            "Port de déchargement non confirmé : vérifiez qu'il s'agit bien du port final."
+            "Port de déchargement non confirmé\u00a0: vérifiez qu'il s'agit bien du port final."
         ),
-        "ETA_CHANGED.title": "{container} : arrivée décalée de {hours} h {direction}",
+        "ETA_CHANGED.title": "{container}\u00a0: arrivée décalée de {hours} h {direction}",
         "ETA_CHANGED.later": "plus tard",
         "ETA_CHANGED.earlier": "plus tôt",
         "ETA_CHANGED.body": "Nouvelle ETA {eta}, au lieu de {previous}.",
@@ -80,20 +80,22 @@ MESSAGES: dict[str, dict[str, str]] = {
         ),
         "TRACKING_PROVIDER_DOWN.title": "{provider} ne répond pas",
         "TRACKING_PROVIDER_DOWN.body": (
-            "Impossible de joindre {provider} pour plusieurs conteneurs d'affilée : les mises à jour "
-            "de suivi sont en pause jusqu'à ce qu'il réponde. Les conteneurs eux-mêmes n'ont rien : "
+            "Impossible de joindre {provider} pour plusieurs conteneurs d'affilée\u00a0: les mises à jour "
+            "de suivi sont en pause jusqu'à ce qu'il réponde. Les conteneurs eux-mêmes n'ont rien\u00a0: "
             "rien à faire ici, le prochain passage reprendra où celui-ci s'est arrêté."
         ),
-        "TRACKING_DELIVERY_FAILED.title": "{container} : une mise à jour de suivi n'a pas pu être traitée",
+        "TRACKING_DELIVERY_FAILED.title": (
+            "{container}\u00a0: une mise à jour de suivi n'a pas pu être traitée"
+        ),
         "TRACKING_DELIVERY_FAILED.body.one": (
             "{provider} a envoyé une mise à jour le {received} que nous n'avons pas réussi à traiter "
             "après {attempts} tentative. Le suivi de ce conteneur peut être en retard. La donnée "
-            "brute est conservée : rien n'est perdu, et elle peut être rejouée."
+            "brute est conservée\u00a0: rien n'est perdu, et elle peut être rejouée."
         ),
         "TRACKING_DELIVERY_FAILED.body.other": (
             "{provider} a envoyé une mise à jour le {received} que nous n'avons pas réussi à traiter "
             "après {attempts} tentatives. Le suivi de ce conteneur peut être en retard. La donnée "
-            "brute est conservée : rien n'est perdu, et elle peut être rejouée."
+            "brute est conservée\u00a0: rien n'est perdu, et elle peut être rejouée."
         ),
         "risk.NONE": "Aucun risque",
         "risk.LOW": "Faible",
@@ -104,8 +106,8 @@ MESSAGES: dict[str, dict[str, str]] = {
         "severity.info": "Info",
         "severity.warning": "Attention",
         "severity.critical": "Critique",
-        "digest.subjectOne": "FreightSight : {title}",
-        "digest.subjectMany": "FreightSight : {count} alertes",
+        "digest.subjectOne": "FreightSight\u00a0: {title}",
+        "digest.subjectMany": "FreightSight\u00a0: {count} alertes",
         "digest.headingOne": "{org} — {count} alerte",
         "digest.headingMany": "{org} — {count} alertes",
         "digest.footer": "Ouvrez FreightSight pour les marquer comme lues.",

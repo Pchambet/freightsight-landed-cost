@@ -140,7 +140,6 @@
     "breadcrumb": "Containers",
     "lastFreeDay": "Last free day {date}",
     "shipment": "Shipment {reference}",
-    "unallocatedSuffix": "unallocated — full amount of the charge, even if it spans beyond this container",
     "notesTitle": "Worth knowing about this allocation",
     "totals": {
       "fob": "FOB",
@@ -267,7 +266,26 @@
       "deleteConfirmConfirm": "Delete",
       "deleteConfirmCancel": "Cancel",
       "undo": "Undo",
-      "restored": "Cost restored"
+      "restored": "Cost restored",
+      "credited": "of which credits −{amount}",
+      "creditItem": "Credit {number} of {date}: −{amount}",
+      "creditNoNumber": "no number",
+      "creditFromDocument": "read from a confirmed credit note",
+      "creditAdd": "Credit",
+      "creditAddLabel": "Record a credit on this cost",
+      "creditTitle": "Credit on {type}, {amount}",
+      "creditHint": "The credit reduces this cost, never below zero. It stays in the history and can be removed.",
+      "creditAmount": "Amount ({currency})",
+      "creditNumber": "Credit note no.",
+      "creditDate": "Credit note date",
+      "creditSubmit": "Record the credit",
+      "creditCancel": "Cancel",
+      "creditSaved": "Credit recorded: the cost is now {amount}.",
+      "creditFailed": "Could not record the credit",
+      "creditRemove": "Remove the credit",
+      "creditRemoved": "Credit removed: the cost is back to {amount}.",
+      "creditRemoveFailed": "Could not remove the credit",
+      "creditAmountInvalid": "Enter an amount above zero."
     }
   },
   "unitCostHighlight": {
@@ -361,22 +379,26 @@
       "back": "Back to purchase orders"
     },
     "noRate": "{currency}→{base} rate missing: value unknown",
+    "rateUnconfirmed": "rate of 1 with no date or source: to be checked",
     "rate": {
       "title": "Exchange rate",
       "hint": "One rate for the whole order. Enter your bank's or the customs declaration's: it replaces the ECB rate, and every landed cost of the order is recomputed.",
       "missing": "No rate known for {currency}: this order's value is unknown and its landed costs are not computed. Enter the rate below.",
+      "unconfirmed": "Rate of 1 with no date or source: to be checked. This order was imported when a rate that could not be found was replaced by 1: its {currency} may be counted as {base}. Enter the right rate, or 1 if it is right: the order will no longer be flagged.",
       "current": "1 {currency} = {rate} {base}",
       "dated": "rate of {date}",
+      "source": "source: {source}",
       "label": "Value of 1 {currency} in {base}",
       "date": "Rate date (optional)",
       "dateHint": "The date is optional: the order has none, so give the day this rate is for if you know it.",
       "save": "Save the rate",
       "saving": "Saving…",
       "saved": "Rate saved: the order's landed costs are recomputed.",
-      "invalid": "Enter a rate above zero, for example 0.9215.",
+      "invalid": "Enter a rate above zero.",
       "failed": "The rate could not be saved.",
       "change": "Change the rate",
-      "cancel": "Cancel"
+      "cancel": "Cancel",
+      "labelDated": "Value of 1 {currency} in {base} on {date}"
     }
   },
   "imports": {
@@ -409,7 +431,7 @@
       "DONE": "Done",
       "FAILED": "Failed"
     },
-    "result": "{pos} POs, {lines} lines, {containers} containers, {loads} loads",
+    "result": "{pos, plural, one {# PO} other {# POs}}, {lines, plural, one {# line} other {# lines}}, {containers, plural, one {# container} other {# containers}}, {loads, plural, one {# load} other {# loads}}",
     "continue": "continue",
     "source": {
       "upload": "Uploaded file",
@@ -461,7 +483,7 @@
     "mapping": {
       "card": "Map the columns of {filename}",
       "fallbackFilename": "the file",
-      "meta": "{rows} rows · {encoding}",
+      "meta": "{rows, plural, one {# row} other {# rows}} · {encoding}",
       "notInFile": "— not in file —",
       "required": "Required: {fields}",
       "back": "Back",
@@ -483,7 +505,8 @@
       "containersLoads": "Containers / loads",
       "newUpdated": "{created, plural, one {# new} other {# new}}, {updated, plural, one {# updated} other {# updated}}",
       "warningCount": "{count, plural, one {# warning} other {# warnings}}",
-      "errorSummary": "{rows, plural, one {# row} other {# rows}} with {errors, plural, one {# error} other {# errors}} will be skipped",
+      "errorSummary": "{rows, plural, =0 {No row left out} one {# row of {total, number} will not be imported} other {# rows of {total, number} will not be imported}} ({errors, plural, one {# error} other {# errors}}).",
+      "leftWithoutError": "{kind, select, CONTAINERS {{count, plural, one {# of them has no error of its own: it goes with its container or bill of lading.} other {# of them have no error of their own: they go with their container or bill of lading.}}} other {{count, plural, one {# of them has no error of its own and goes with another row: see the warnings.} other {# of them have no error of their own and go with other rows: see the warnings.}}}}",
       "noError": "No row error.",
       "headerRow": "Column names read from line {line}.",
       "totalsRowIgnored": "Totals row ignored.",
@@ -529,7 +552,9 @@
       "creditNotes": "{count, plural, one {# credit note left out: check it does not refund a finding.} other {# credit notes left out: check none refunds a finding.}}",
       "next": "Import next: {kind}",
       "prepareAudit": "See what the audit still needs",
-      "creditReverses": "{count, plural, one {# credit note cancels a cost still counted: delete that cost.} other {# credit notes cancel costs still counted: delete those costs.}}"
+      "creditReverses": "{count, plural, one {# credit note cancels a cost still counted: record it on that cost with the Credit button in the list of costs.} other {# credit notes cancel costs still counted: record each one on its cost with the Credit button in the list of costs.}}",
+      "withoutRate": "{count, plural, one {No exchange rate:} other {# orders without an exchange rate:}}",
+      "withoutRateMore": "and {count, plural, one {# other} other {# others}}."
     },
     "kinds": {
       "legend": "Kind of file",
@@ -618,7 +643,7 @@
       "creditLine": "Row {row} · {date} · {vendor} · invoice {invoice} · {amount}",
       "creditsMore": "and {count} more",
       "vatApart": "tracked apart, not a landed cost",
-      "reversesCost": "cancels a cost still counted"
+      "reversesCost": "cancels a cost still counted: to record as a credit on that cost"
     },
     "row": {
       "invoiceNo": "invoice {number}",
@@ -630,7 +655,7 @@
         "AMOUNT_CURRENCY_MISMATCH": "The amount is in {amount}, the currency column says {currency}: fix one of the two.",
         "TARGET_FROM_LABEL": "Attached to {value}, read in the label: check it is the right one.",
         "ZERO_AMOUNT": "Zero amount: not a cost, the row is ignored.",
-        "CREDIT_NOTE_SKIPPED": "{reverses, select, yes {Credit note of {amount} left out: it cancels a cost still counted. Delete that cost.} other {Credit note of {amount} left out: a cost is never negative. Check it does not refund a finding.}}",
+        "CREDIT_NOTE_SKIPPED": "{reverses, select, yes {Credit note of {amount} left out: it cancels a cost still counted. Record it on that cost with the Credit button in the list of costs.} other {Credit note of {amount} left out: a cost is never negative. Check it does not refund a finding.}}",
         "REVERSED_IN_FILE": "Cancelled by row {row} ({amount} the other way): both rows are left out.",
         "INVOICE_IN_INBOX": "Invoice {invoice_number} is waiting for review among the uploaded invoices.",
         "SEVERAL_ESTIMATES": "{estimates} \"{type}\" estimates are open on this freight: which one this row replaces is unknown. Enter this cost by hand on the sheet.",
@@ -716,7 +741,7 @@
       },
       "never": "never",
       "unknown": "Status not reported.",
-      "checkedAt": "Checked on {when} (UTC).",
+      "checkedAt": "Checked on {when} (Paris time).",
       "check": {
         "alert_emails": "Alert e-mails",
         "automatic_tracking": "Automatic container tracking",
@@ -859,6 +884,7 @@
     "fxSource": {
       "ecb": "ECB",
       "ecb_latest": "latest published ECB rate",
+      "import": "imported file",
       "manual": "manual",
       "same": "same currency"
     },
@@ -896,7 +922,14 @@
       "import_undone": "Import undone",
       "cost_closed": "Estimate closed without invoice",
       "cost_superseded": "Estimate replaced by the actual",
-      "purchase_order_updated": "Order updated"
+      "purchase_order_updated": "Order updated",
+      "cost_credited": "Credit recorded on a cost",
+      "cost_credit_removed": "Credit removed from a cost",
+      "rate_card_created": "Rate card added",
+      "rate_card_updated": "Rate card changed",
+      "rate_card_deleted": "Rate card removed",
+      "cost_estimated": "Cost estimated from the rate cards",
+      "erp_by_hand_entered": "Difference entered by hand in the ERP"
     },
     "finding": {
       "DUPLICATE_CHARGE": "Service invoiced twice",
@@ -955,6 +988,7 @@
     "IMPORT_ALREADY_DONE": "This import has already been committed.",
     "REQUIRED": "Value required.",
     "NOT_A_NUMBER": "\"{value}\" is not a number.",
+    "NUMBER_TOO_LARGE": "\"{value}\" is too large for this column. Check the value and its unit.",
     "NOT_A_DATE": "\"{value}\" is not a recognised date (accepted: 31/12/2026, 31.12.2026, 2026-12-31).",
     "NOT_POSITIVE": "The value must be greater than zero ({value}).",
     "NEGATIVE": "The unit price cannot be negative ({value}).",
@@ -963,9 +997,13 @@
     "DUPLICATE_IN_FILE": "Line {line_no} of order {po_number} appears twice in the file.",
     "DEPRECATED_COLUMN": "Column \"{column}\" (allocation percentage) is ignored: costs follow the organization's default allocation method.",
     "FX_RATE_APPLIED": "Order in {currency}: rate {rate} ({currency}→{base_currency}) applied, {source, select, ecb {the ECB rate of {rate_date}} other {the latest ECB rate published, that of {rate_date}}}. You can replace it on the order with your bank's rate.",
+    "FX_RATE_FROM_FILE": "Order in {currency}: the file's rate applied, {rate} ({currency}→{base_currency}). It is kept as given: only another rate, typed on the order or given by a file, replaces it.",
+    "FX_RATE_INVERTED": "Order in {currency}: the rate {rate} looks inverted. The ECB gives {ecb_rate} {base_currency} for 1 {currency} on {rate_date}. The file must give the value of 1 {currency} in {base_currency}.",
+    "FX_RATE_FAR_FROM_ECB": "Order in {currency}: the rate {rate} is more than 10% away from the ECB rate of {rate_date}, {ecb_rate} {base_currency} for 1 {currency}. Check it in the file. If it is right, import the line without a rate, then type it on the order.",
+    "FX_RATE_DIFFERS_IN_ORDER": "Order {po_number}: this line's rate {rate} differs from {kept}, given on an earlier line. The order keeps {kept}.",
     "FX_RATE_DEFAULTED": "Order in {currency}: no exchange rate known as of {rate_date}, rate {rate} ({currency}→{base_currency}, source: default) was applied. Correct it on the order.",
     "FX_RATE_MISSING": "Order in {currency}: no {currency}→{base_currency} exchange rate known for {rate_date}. Its value stays missing — never read 1 for 1 — until a rate is set on the order; costs split by value on its containers stay unallocated until then.",
-    "MISSING_FX_RATE": "Exchange rate missing on an order: its value in the base currency is unknown, so this cost cannot be split by value. Set the rate on the order, or choose another method.",
+    "MISSING_FX_RATE": "Exchange rate missing on an order: its value in the base currency is unknown, so nothing can be split by value. Set the rate on the order, or choose another method.",
     "NOT_AN_ACTUAL": "Only an actual cost can replace an estimate.",
     "SELF_SUPERSEDE": "A cost cannot replace itself.",
     "NOT_AN_ESTIMATE": "The targeted cost is not an estimate.",
@@ -979,8 +1017,6 @@
     "DUPLICATE_MANUAL_SPLIT": "A manual split names the same target twice: give it one line and one percentage.",
     "ZERO_BASIS_LINES": "These lines received no charge: their allocation basis is zero. Pick by quantity or by weight if they should carry some.",
     "DUTY_RATE_PARTIAL": "Duty spread on the customs value: these lines have no duty rate. Fill in their HS code for a theoretical-duty split.",
-    "CREDIT_NOTE_MANUAL": "This document was read as a credit note: enter the refund by hand, a cost cannot be negative yet.",
-    "NEGATIVE_COST_UNSUPPORTED": "A negative line cannot become a cost: untick it and enter the refund by hand.",
     "DUPLICATE_COST": "A cost of the same type is already recorded on this freight. Check it, then confirm again if this invoice is a different charge.",
     "COSTS_PUSHED_TO_ERP": "This invoice's costs are already in the ERP: correct them there with an adjustment document, or forget the push first.",
     "INVALID_STATUS": "This action is not possible given the invoice's current state.",
@@ -1031,11 +1067,11 @@
     "RATE_LIMITED": "Too many requests in a short time. Try again in a moment.",
     "PERIOD_INVALID": "The period is not valid: the start date must come before the end date, between 2000 and 2100.",
     "ASSUMED_COEFFICIENT_INVALID": "The applied ratio is a ratio between 1 and 3, such as 1.15, not a percentage.",
-    "INVOICE_ALREADY_RECORDED": "This invoice is already recorded: reopen or delete what carries it before confirming it.",
+    "INVOICE_ALREADY_RECORDED": "This invoice is already in the costs. If it is the same invoice received twice, reject this one. If the costs already recorded are the wrong ones, remove them (by reopening the invoice that created them, or from the list of costs), then confirm this one.",
     "UNKNOWN_TARGET": "A line points to a container, order or shipment that no longer exists: give it another target, then confirm.",
-    "recordedInvoice": "This invoice is already recorded ({items}): reopen or delete what carries it before confirming it.",
+    "recordedInvoice": "This invoice is already in the costs ({items}). If it is the same invoice received twice, reject this one. If the costs already recorded are the wrong ones, remove them (by reopening the invoice that created them, or from the list of costs), then confirm this one.",
     "recordedLine": "This invoice already has this cost ({items}): edit or delete the existing entry rather than add a second one.",
-    "recordedOn": "on {date}",
+    "recordedOn": "{kind, select, estimate {entered on {date}} other {recorded on {date}}}",
     "INVOICE_LINE_ALREADY_RECORDED": "This invoice already has this cost: edit or delete the existing entry rather than add a second one.",
     "recordedInvoiceEstimate": "An estimate already carries this invoice number ({items}): edit or delete that estimate before confirming.",
     "recordedLineEstimate": "An estimate already carries this invoice number for this cost ({items}): edit or delete that estimate rather than record a second cost.",
@@ -1061,7 +1097,22 @@
     "CURRENCY_ASSUMED": "{rows, plural, one {One amount does not say} other {# amounts do not say}} which currency {rows, plural, one {it is} other {they are}} in (no currency column, symbol or header): {rows, plural, one {it is read} other {they are read}} in {currency}. If the statement is in another currency, add a currency column and match it.",
     "UNIT_COLUMN_UNMAPPED": "Column \"{column}\" was not read: it does not say whether it holds one unit's value or the line's total. Match it to \"{field}\" if it is one unit's, or to the line-total field (divided by the quantity). Without it, costs split by weight or volume have no basis.",
     "MAPPING_UNIT_AND_LINE_TOTAL": "{dimension, select, volume {Volume} other {Weight}}: match the per-unit column or the line-total column, not both.",
-    "PERIOD_ORDERS_WITHOUT_FX_RATE": "This month cannot be closed: some orders have no exchange rate ({orders}). The value of their goods is unknown, and the close would freeze a wrong landed cost. Set the rate on each of them, then close."
+    "PERIOD_ORDERS_WITHOUT_FX_RATE": "This month cannot be closed: some orders have no exchange rate ({orders}). The value of their goods is unknown, and the close would freeze a wrong landed cost. Set the rate on each of them, then close.",
+    "CREDIT_WITHOUT_COST": "Line {line}: no invoiced cost of this type, in {currency}, is recorded on this target. A credit note reduces an existing cost: record the invoice it corrects first.",
+    "CREDIT_EXCEEDS_COST": "The credit of {credit} is more than what the cost still amounts to ({remaining}). A cost never goes below zero: check the amount or the cost chosen.",
+    "CREDIT_CURRENCY_MISMATCH": "The credit is in {credit_currency}; the cost it would reduce is in {cost_currency}. A credit is never converted: it reduces a cost in its own currency.",
+    "CREDIT_COST_REQUIRED": "Line {line}: {count} invoiced costs could be reduced by this credit. Choose on the line the one it corrects.",
+    "CREDIT_COST_MISMATCH": "Line {line}: the cost chosen is not an invoiced cost of this type on this target. Choose one from the line's list.",
+    "CREDIT_NOT_A_REFUND": "Line {line}: the total is a charge, not a refund, on the cost chosen. Check the signs of the amounts.",
+    "CREDIT_ALREADY_RECORDED": "Credit note {credit_number} already reduces this cost.",
+    "CREDIT_ON_ESTIMATE": "An estimate was never paid: there is nothing to refund. Record the credit on the invoiced cost.",
+    "CREDIT_FROM_INVOICE": "This credit comes from a confirmed document ({credit_number}): reopen that document to remove it.",
+    "CREDIT_NOT_FOUND": "This credit no longer exists. Reload the page.",
+    "COST_HAS_CREDITS": "{count, plural, one {A credit reduces a cost involved} other {# credits reduce the cost or costs involved}}: remove {count, plural, one {it} other {them}} first, from the list of costs, or by reopening {count, plural, one {the confirmed credit note it comes from} other {the confirmed credit notes they come from}}. While a credit reduces it, a cost keeps its amount, currency, type and status, and cannot be deleted, by hand, by reopening its invoice or by undoing its import.",
+    "PERIOD_DRIFT_ORDERS_WITHOUT_FX_RATE": "This month's gap cannot be marked as booked: some orders have no exchange rate ({orders}). The value of their goods is unknown today, and with it the amount of the gap. Set the rate on each of them, then mark the gap.",
+    "recordedItem": "{invoice}: {costs}",
+    "ERP_BY_HAND_CHANGED": "The difference to enter has changed since this screen was shown ({difference}): read it again, then say it is entered.",
+    "ERP_BY_HAND_NOTHING_TO_ENTER": "Nothing is waiting to be entered by hand for this cost any more."
   },
   "timeline": {
     "title": "Timeline",
@@ -1096,7 +1147,7 @@
     "markRead": "Mark as read",
     "markAllRead": "Mark all as read",
     "marked": "Alert marked as read",
-    "allMarked": "{count} alerts marked as read",
+    "allMarked": "{count, plural, one {# alert marked as read} other {# alerts marked as read}}",
     "failed": "Could not update the alert",
     "openContainer": "Open the container",
     "bell": "Alerts, {count} unread",
@@ -1164,7 +1215,7 @@
       "done": "Invoice uploaded, reading in progress",
       "failed": "Could not upload the invoice",
       "duplicate": "This invoice was already uploaded",
-      "chooseMany": "Choose the invoices, or drop them here — one or several at once",
+      "chooseMany": "Choose the invoices or drop them here, one or several at once",
       "listLabel": "Invoices to upload",
       "submitMany": "{count, plural, =0 {Upload and read} one {Upload and read the invoice} other {Upload and read the # invoices}}",
       "status": {
@@ -1211,17 +1262,17 @@
       "confirm": "{count, plural, one {Confirm the line} other {Confirm the # lines}}",
       "confirmNone": "Accept at least one line",
       "confirmed": "{count, plural, =0 {No cost created} one {# cost created} other {# costs created}}",
-      "rejected": "Invoice rejected",
+      "rejected": "{kind, select, credit {Credit note rejected} other {Invoice rejected}}",
       "retried": "Reading restarted",
       "failed": "Action failed",
       "confirmedBanner": "{count, plural, =0 {Invoice confirmed on {date}, no cost created.} one {Invoice confirmed: # cost created on {date}.} other {Invoice confirmed: # costs created on {date}.}}",
       "continueTitle": "Next step",
       "continueHint": "Costs are allocated. Open the container to see the unit cost per SKU.",
       "continueToContainer": "View container {container}",
-      "rejectedBanner": "Invoice rejected — no costs were created.",
-      "rejectedHint": "Reopen it for review below (no need to upload the PDF again).",
+      "rejectedBanner": "{kind, select, credit {Credit note rejected: no cost was reduced.} other {Invoice rejected: no costs were created.}}",
+      "rejectedHint": "Reopen it to review it, without uploading the PDF again.",
       "reopenAction": "Reopen for review",
-      "reopened": "Invoice reopened — you can accept lines and confirm.",
+      "reopened": "Invoice reopened: you can accept lines and confirm.",
       "notes": "Checks",
       "extractedBy": "Read by {extractor}",
       "vendor": "Vendor",
@@ -1231,14 +1282,14 @@
       "subtotal": "Pre-tax",
       "subtotalMissing": "not printed",
       "vat": "VAT",
-      "lowConfidenceTitle": "Low read confidence —",
+      "lowConfidenceTitle": "Uncertain reading:",
       "lowConfidenceBody": "check every line before confirming.",
       "confirmAnyway": "Confirm anyway",
       "duplicateBlocked": "At least one cost of the same type is already recorded on this freight (see the lines in red). Confirm again to record it anyway.",
-      "creditNoteBanner": "This document is a credit note: refunds cannot become costs yet. Enter the refund by hand.",
+      "creditNoteBanner": "Credit note confirmed on {date}: {count, plural, =0 {no cost reduced.} one {# cost reduced.} other {# costs reduced.}}",
       "reopenConfirmedAction": "Reopen for correction",
-      "reopenConfirmedTitle": "Reopen this confirmed invoice?",
-      "reopenConfirmedBody": "{count, plural, one {The cost this confirmation created will be deleted.} other {The # costs this confirmation created will be deleted.}} The invoice goes back to review; nothing else is touched.",
+      "reopenConfirmedTitle": "{kind, select, credit {Reopen this confirmed credit note?} other {Reopen this confirmed invoice?}}",
+      "reopenConfirmedBody": "{count, plural, one {The cost this confirmation created will be deleted.} other {The # costs this confirmation created will be deleted.}} The invoice goes back to review; nothing else changes.",
       "reopenConfirmedConfirm": "Reopen and delete the costs",
       "reopenConfirmedCancel": "Cancel",
       "reopenedConfirmed": "Invoice reopened, {count, plural, one {# cost deleted} other {# costs deleted}}.",
@@ -1256,18 +1307,25 @@
       "sumMatches": "Kept lines: {amount} = the invoice's total before tax",
       "sumGap": "Kept lines: {kept} · invoice before tax: {subtotal} · gap {gap}",
       "notTheSame": "It is not the same invoice: confirm anyway",
-      "fixHeader": "Number or provider misread? Correct the header"
+      "fixHeader": "Number or provider misread? Correct the header",
+      "creditsConfirmed": "{count, plural, one {# cost reduced by the credit} other {# costs reduced by the credit}}",
+      "reopenCreditBody": "{count, plural, one {The credit will be removed from the cost it reduces, which gets its amount back.} other {The credit will be removed from the # costs it reduces, which get their amounts back.}} {kind, select, credit {The credit note goes} other {The invoice goes}} back to review; nothing else changes.",
+      "reopenCreditConfirm": "Reopen and remove the credit",
+      "reopenedCredit": "{kind, select, credit {Credit note reopened} other {Invoice reopened}}: {count, plural, one {# cost got its amount back} other {# costs got their amounts back}}.",
+      "reopenMixedBody": "{created, plural, one {The cost this confirmation created will be deleted} other {The # costs this confirmation created will be deleted}}, and {credited, plural, one {the cost it reduced gets its amount back.} other {the # costs it reduced get their amounts back.}} The invoice goes back to review; nothing else changes.",
+      "reopenedMixed": "Invoice reopened: {created, plural, one {# cost deleted} other {# costs deleted}}, {credited, plural, one {# cost got its amount back} other {# costs got their amounts back}}.",
+      "pageTitle": "{kind, select, credit {Credit note} other {Invoice}} {number}"
     },
     "lineNotes": {
       "singleContainer": "Charged to {container}, the only container named on the invoice.",
       "duplicateCost": "A {type} cost of {amount} is already recorded on {scope, select, CONTAINER {this container} SHIPMENT {this shipment} PO {this order} other {this scope}} ({vendor}, invoice {invoice}). It may be counted twice.",
-      "unknownContainer": "{container} is not one of your containers — choose the target manually.",
+      "unknownContainer": "{container} is not one of your containers: choose the target manually.",
       "noFxRate": "No {currency} rate for {date}: enter the rate before confirming.",
-      "arithmeticMore": "Lines read exceed the total by {amount} — a line may be missing or misread.",
-      "arithmeticLess": "Lines read are short of the total by {amount} — a line may be missing or misread.",
-      "multiContainer": "This invoice mentions several containers — check each line is on the right one.",
-      "creditNote": "This document is a credit note: refunds cannot become costs yet, enter it by hand.",
-      "negativeLine": "Negative line ({amount}): it stays on screen, but it cannot become a cost yet.",
+      "arithmeticMore": "The lines read add up to {amount} more than the invoice total: a line may be extra or misread.",
+      "arithmeticLess": "The lines read add up to {amount} less than the invoice total: a line may be missing or misread.",
+      "multiContainer": "This invoice mentions several containers: check each line is on the right one.",
+      "creditNote": "This document is a credit note: each line kept reduces a cost already invoiced (same target, type and currency) instead of creating one.",
+      "negativeLine": "Negative line ({amount}): it reduces the charge of the same type on the same target in this invoice, or failing that a cost already invoiced.",
       "droppedLine": "A line could not be priced and is not shown: “{description}” ({amount}). Add it by hand if it counts.",
       "currencyGuess": "The document names several currencies: {chosen} was used (also seen: {others}). Check before confirming.",
       "addedByHuman": "Line added by hand during review.",
@@ -1296,7 +1354,13 @@
       "chooseType": "Choose the type…",
       "missingType": "type",
       "missingTarget": "target",
-      "toComplete": "to complete: {what}"
+      "toComplete": "to complete: {what}",
+      "refund": "Credit",
+      "refundTo": "Cost reduced",
+      "refundChoose": "Choose the cost reduced…",
+      "refundNone": "No invoiced cost of this type on this target",
+      "refundOption": "{date} · {invoice} · {amount} left",
+      "missingRefund": "cost reduced"
     },
     "bulk": {
       "label": "{count, plural, one {Attach the line without a target to} other {Attach the # lines without a target to}}",
@@ -1340,7 +1404,8 @@
       "period": "Month",
       "import": "Import",
       "purchase_order": "Order",
-      "audit": "Audit"
+      "audit": "Audit",
+      "rate_card": "Rate card"
     },
     "fields": {
       "status": "Status",
@@ -1434,7 +1499,23 @@
       "products_created": "Product sheets created",
       "products_updated": "Product sheets updated",
       "costs_skipped": "Costs already on file, left as they were",
-      "cost_dates": "Cost dates"
+      "cost_dates": "Cost dates",
+      "credited": "Credit",
+      "credit_number": "Credit note no.",
+      "credit_vendor": "Credit note issuer",
+      "credit_date": "Credit note date",
+      "credit_ids": "Credits recorded",
+      "basis": "Basis",
+      "price": "Rate card price",
+      "hs_code": "HS code",
+      "rateBasis": {
+        "FLAT": "Flat",
+        "PER_100KG": "Per 100 kg",
+        "PER_CBM": "Per m³",
+        "PCT_OF_FOB": "% of FOB"
+      },
+      "difference": "Difference entered",
+      "held": "Held by the document"
     },
     "invoiceStatus": {
       "NEEDS_REVIEW": "Needs review",
@@ -1452,7 +1533,8 @@
     "filterLabel": "Action",
     "filterApply": "Show",
     "itemCount": "{count, plural, one {# item} other {# items}}",
-    "pair": "{name}: {value}"
+    "pair": "{name}: {value}",
+    "creditCount": "{count, plural, one {# credit} other {# credits}}"
   },
   "confidence": {
     "high": "Reliable read",
@@ -1467,9 +1549,9 @@
     "estimated": "Still estimated",
     "estimatedHint": "Estimated charges no invoice has replaced yet.",
     "actual": "Invoiced",
-    "unforecastNote": "of which, with no estimate:",
+    "unforecastNote": "of which {amount} invoiced with no prior estimate",
     "allocated": "Allocated",
-    "allocatedHint": "Still estimated + invoiced.",
+    "allocatedHint": "Still estimated + invoiced, excluding charges not allocated.",
     "variance": "Variance",
     "varianceHint": "Invoiced minus estimated, on the charges where an invoice has replaced an estimate — and only those.",
     "varianceBasis": "{count, plural, one {# charge matched} other {# charges matched}}",
@@ -1479,8 +1561,19 @@
     "completenessHint": "Counts cost types (freight, THC…), not invoice lines.",
     "noExpected": "nothing expected yet",
     "apply": "Estimate from rate cards",
-    "applied": "{created} estimates created",
-    "appliedSkipped": "{created} estimates created, {skipped} skipped",
+    "applied": "{created, plural, one {# estimate created} other {# estimates created}}",
+    "appliedSkipped": "{created, plural, =0 {No estimate created} one {# estimate created} other {# estimates created}}, {skipped, plural, one {# cost type left out} other {# cost types left out}}",
+    "skippedLine": "{type}: {reason}",
+    "skipped": {
+      "SCOPE_NOT_APPLIED": "rate cards at the “{scope}” level are not applied yet",
+      "NEEDS_SHIPMENT": "this rate card applies to a shipment, and this container is on none",
+      "ALREADY_RECORDED": "a cost of this type is already recorded",
+      "ON_SHIPMENT": "a cost of this type is already recorded on this container's shipment",
+      "ON_SHIPMENT_CONTAINER": "a cost of this type is already recorded on a container of this shipment",
+      "NO_BASIS": "this container lacks the figure the rate card is based on ({basis})",
+      "NO_TARIFF_RATE": "no duty rate on this container's lines",
+      "other": "unrecognised reason ({code})"
+    },
     "skippedTitle": "Skipped",
     "noRateCards": "No rate card: add some in the settings to estimate before the invoice.",
     "failed": "Could not apply the rate cards",
@@ -1490,7 +1583,8 @@
     "closed": "closed",
     "close": "Close without invoice",
     "closeReason": "Reason (e.g. never invoiced by the forwarder)",
-    "closed_ok": "Estimate closed"
+    "closed_ok": "Estimate closed",
+    "notAllocatedNote": "of which {amount} not allocated"
   },
   "rateCards": {
     "hint": "One rate card per cost type. Applied on demand to a container to create estimated costs, later replaced by the real invoice. A {demurrage} rate card is read as a daily rate and feeds the avoided-demurrage estimate.",
@@ -1613,11 +1707,16 @@
         "pushed_cost_gone": "{existing} carries {costs}, which no longer counts on this container (deleted, closed or moved). The document still holds it. Still a draft: delete it in the ERP, forget the push here, then push again. Already validated: forget the push here with a reason, then push again; it is taken back in an adjustment.",
         "ambiguous_line": "{po_number} line {line_no} ({sku}) matches {count} lines of receipt {receipt}. The same product received in several lots has several lines there, and their quantities do not say which one this order line is: splitting it by guesswork would put the cost on the wrong goods, so it is refused. Push this container by hand, or receive the order on a single line.",
         "erp_currency_mismatch": "The ERP company keeps its books in {erp_currency} and this organisation works in {base_currency}. Our amounts would be read as {erp_currency} and the stock valuation would be wrong by the exchange rate, so nothing is written.",
-        "adjustment_unplaced": "{existing} was validated with amounts that have changed since ({changes}), and its split per receipt line is not known here. Without it the difference cannot be placed on the right goods: nothing is written for this cost, enter the adjustment by hand in the ERP."
+        "adjustment_unplaced": "{existing} was validated with amounts that have changed since ({changes}), and its split per receipt line is not known here. Without it the difference cannot be placed on the right goods: nothing is written for this cost, enter the adjustment by hand in the ERP.",
+        "take_back_no_goods": "{existing} still holds {held} for {cost}, which no longer counts on this container. No goods are left in it to find the receipt from, so nothing is written: take this amount back by hand in the ERP."
       },
       "pushedAs": "already in {name}",
+      "byHand": "{existing} holds {held} of it: the {difference} difference is to be entered by hand in the ERP",
       "willGo": "{count, plural, one {# cost will go} other {# costs will go}}",
-      "nothingNew": "Nothing new to push."
+      "nothingNew": "Nothing new to push.",
+      "byHandEntered": "It is entered in Odoo",
+      "byHandEnteredOk": "Difference noted as entered in Odoo: a later change will only ask for its own.",
+      "byHandFailed": "Could not record the difference as entered"
     },
     "pushes": {
       "title": "Documents created in Odoo",
@@ -1680,6 +1779,8 @@
     "dndEmpty": "No demurrage paid or avoided in the period.",
     "atRiskTitle": "At risk now (still at terminal)",
     "skuAverageHint": "Weighted average across containers — unit cost may differ per container.",
+    "skuLeftOutQty": "+ {quantity} not counted",
+    "skuLeftOutFob": "+ {amount} not counted",
     "notEstimable": "not estimable",
     "dndRule": {
       "noAlert": "No risk alert and no pickup date recorded: nothing to estimate.",
@@ -1722,7 +1823,9 @@
         "subtitle": "What each family of charges adds to the price paid to suppliers."
       }
     },
-    "estimated": "estimated"
+    "estimated": "estimated",
+    "heldFees": "on hold",
+    "leftOutFob": "{missing, plural, =0 {+ {amount} not counted} one {+ {amount} known, not counted, and # line with no value} other {+ {amount} known, not counted, and # lines with no value}}"
   },
   "workflow": {
     "nextStep": "Next step",
@@ -1743,7 +1846,9 @@
       "viewReports": "View reports",
       "unitCostsReady": "Costs are allocated. Compare FOB price to landed cost per SKU.",
       "detailBreakdown": "Allocation breakdown",
-      "default": "Explore allocation and unit costs for container {container}."
+      "default": "Explore allocation and unit costs for container {container}.",
+      "heldByRate": "{all, select, yes {All of this container's charges are waiting to be allocated} other {Part of this container's charges is waiting to be allocated}}: order {order} has no exchange rate. Enter its rate and they will be spread at once.",
+      "setRate": "Enter the rate of {order}"
     },
     "hub": {
       "invoicesWaiting": "{count, plural, one {# invoice to review before continuing} other {# invoices to review before continuing}}",
@@ -1779,7 +1884,7 @@
       "skip": "Skip to the next one"
     },
     "reports": {
-      "explore": "Unit cost for {sku} is computed — open the container to show the detail.",
+      "explore": "Unit costs are computed: open a container to see each item's in detail.",
       "openContainer": "Unit costs · {container}",
       "viewVariance": "Estimated → actual variance",
       "default": "Browse aggregated reports or monthly variance.",
@@ -1816,9 +1921,12 @@
       "mapping": "Match the file's columns to the expected fields, then validate as a dry run.",
       "mappingAction": "Match columns",
       "reviewErrors": "The validation report found errors — fix the file or import only the valid rows.",
-      "reviewOk": "The validation report is clean — import the rows.",
+      "reviewOk": "No row is refused: read the warnings if there are any, then import the rows.",
       "done": "{kind, select, PRODUCTS {The price list is imported: its duty rates, weights and volumes will be copied onto the order lines imported next.} CONTAINERS {The tracking is imported: check arrival dates and demurrage risk on the containers.} COSTS {The costs are imported: see what is still missing for the period's audit to be right.} other {Import committed. Check that your purchase orders are loaded into containers.}}",
-      "doneAction": "{kind, select, PRODUCTS {Back to imports} CONTAINERS {View containers} COSTS {Prepare the audit} other {View purchase orders}}"
+      "doneAction": "{kind, select, PRODUCTS {Back to imports} CONTAINERS {View containers} COSTS {Prepare the audit} other {View purchase orders}}",
+      "doneWithoutRate": "{count, plural, one {Order {po} has no exchange rate: its value stays missing until a rate is entered.} other {# orders have no exchange rate, listed below: their value stays missing until a rate is entered on each.}}",
+      "openOrder": "Open order {po}",
+      "doneUnloaded": "Orders imported. This file puts none of them in a container: import the container tracking, with its order-number column, to load them."
     },
     "pos": {
       "empty": "No purchase orders yet. Import a file or load the sample data.",
@@ -1836,7 +1944,11 @@
       "openContainer": "Container {container}",
       "unitCosts": "Costs are allocated — see unit cost per SKU on the container.",
       "seeUnitCosts": "Unit costs · {container}",
-      "ready": "Allocation is up to date on this order."
+      "ready": "Allocation is up to date on this order.",
+      "noRate": "{held, select, yes {The charges already entered on this order's container are waiting for its exchange rate to be allocated. Enter the rate above and they will be spread at once.} other {This order has no exchange rate: its value is unknown, and so is its landed cost. Enter the rate above.}}",
+      "setRate": "Enter the rate",
+      "heldByOther": "The charges of this order's container are on file, but waiting to be allocated{orderCount, plural, one {: order {orders} has no exchange rate. Enter its rate and they will be spread at once.} other {: orders {orders} have no exchange rate. Enter their rates and they will be spread at once.}}",
+      "openHolder": "Open order {order}"
     },
     "settings": {
       "noRateCards": "Add rate cards to estimate freight and fees before actual invoices.",
@@ -1898,7 +2010,7 @@
       "exposedNoDate": "is exposed to demurrage, with no last free day on file.",
       "review": "{count, plural, one {# read invoice is waiting for your review before it becomes a cost.} other {# read invoices are waiting for your review before they become costs.}}",
       "reviewAction": "Review",
-      "uncosted": "{count, plural, one {# loaded container has no cost yet: its landed cost equals its purchase price.} other {# loaded containers have no cost yet: their landed cost equals their purchase price.}}",
+      "uncosted": "{count, plural, one {# loaded container has no charge yet, estimated or invoiced: it is counted in no landed cost.} other {# loaded containers have no charge yet, estimated or invoiced: they are counted in no landed cost.}}",
       "soFar": "{amount} so far",
       "failed": "{count, plural, one {# invoice could not be read.} other {# invoices could not be read.}}",
       "failedAction": "See",
@@ -1906,7 +2018,10 @@
       "estimatesAction": "See variances",
       "uncostedAction": "See",
       "unloaded": "{count, plural, one {# container carries no order line.} other {# containers carry no order line.}}",
-      "unloadedAction": "See"
+      "unloadedAction": "See",
+      "held": "{count, plural, one {Container {containers} has charges on file waiting to be allocated} other {# containers ({containers}) have charges on file waiting to be allocated}}{orderCount, plural, =0 {: a figure needed to spread them is missing, see the allocation.} one {: order {orders} has no exchange rate. Enter it and they will be spread at once.} other {: orders {orders} have no exchange rate. Enter them and they will be spread at once.}}",
+      "heldAction": "See",
+      "heldRateAction": "Enter the rate"
     },
     "empty": {
       "title": "No figures to show yet",
@@ -1917,7 +2032,7 @@
     },
     "kpi": {
       "coef": "Landed cost ratio",
-      "coefHint": "Landed cost divided by purchase price (FOB). 1.27: every euro purchased costs you €1.27 once the goods are at your door. Import VAT excluded.",
+      "coefHint": "Landed cost divided by purchase price (FOB): what each euro of goods bought costs you once the goods are at your door. Import VAT excluded.",
       "coefSub": "i.e. {pct} of charges on the purchase price",
       "fees": "Landing charges",
       "feesHint": "Everything added to the purchase price to bring the goods to you: freight, insurance, port charges, customs, delivery, demurrage. Import VAT excluded.",
@@ -1933,7 +2048,8 @@
       "varianceSub": "{pairs, plural, one {# cost trued up} other {# costs trued up}}, for {estimated} estimated",
       "varianceNone": "No estimate replaced by an invoice in the period.",
       "dndAtRisk": "{amount} running",
-      "feesEstimated": "of which {amount} estimated"
+      "feesEstimated": "of which {amount} estimated",
+      "feesLeftOut": "{count, plural, one {excluding # container with no charge allocated} other {excluding # containers with no charge allocated}} {missing, plural, =0 {({fob} of goods)} one {({fob} of known goods, plus # line with no value)} other {({fob} of known goods, plus # lines with no value)}}"
     },
     "structure": {
       "title": "Landing charges per month",
@@ -1964,7 +2080,8 @@
         "unitLanded": "Unit landed",
         "coef": "Ratio"
       },
-      "estimated": "estimated"
+      "estimated": "estimated",
+      "leftOut": "+ {quantity} not counted"
     },
     "orgChanged": {
       "title": "Your last action was not saved",
@@ -2102,7 +2219,9 @@
       "marginOtherCurrency": "Selling price in another currency: no margin computed.",
       "marginLast": "{margin} on the last arrival",
       "withEstimates": "including {count, plural, one {# container still estimated} other {# containers still estimated}}",
-      "withEstimatesUncounted": "including costs still estimated"
+      "withEstimatesUncounted": "including costs still estimated",
+      "onTheWay": "{qty} on the way",
+      "counted": "average over the {qty} units counted"
     },
     "trend": {
       "title": "Unit cost, arrival after arrival",
@@ -2139,7 +2258,8 @@
       "target": "Target margin",
       "needed": "Selling price excl. VAT to hold",
       "priceHolds": "Your current price ({price}) holds this margin.",
-      "priceShort": "Your current price ({price}) is {gap} short."
+      "priceShort": "Your current price ({price}) is {gap} short.",
+      "subtitleAverage": "Computed on the average of the counted arrivals."
     },
     "product": {
       "title": "Product sheet",
@@ -2158,7 +2278,8 @@
       "failed": "Could not save the product sheet",
       "numberInvalid": "One of the numbers cannot be read. Use digits, with a dot for decimals.",
       "scopeHint": "Editing the sheet changes no landed cost already computed: values are copied onto new order lines only."
-    }
+    },
+    "leftOut": "+ {quantity} not counted"
   },
   "sample": {
     "banner": "This company holds sample data: the figures you see may be those of a fictional importer.",
@@ -2213,13 +2334,14 @@
       "cancel": "Cancel",
       "working": "Working…",
       "closed": "{month} is closed.",
-      "reopened": "{month} is reopened."
+      "reopened": "{month} is reopened.",
+      "blocked": "{count, plural, one {This month cannot be closed: order <o>{orders}</o> has no exchange rate. Enter its rate to close it.} other {This month cannot be closed: orders <o>{orders}</o> have no exchange rate. Enter their rates to close it.}}"
     },
     "detail": {
       "closedSubtitle": "Closed on {date} by {by}. The figures below are those of the close.",
       "openSubtitle": "{count, plural, one {# container arrived in that month} other {# containers arrived in that month}}. Live figures: they move with every cost recorded.",
       "frozenLanded": "Frozen landed cost",
-      "frozenHint": "The month's landed cost at the time of closing. It no longer changes, whatever happens next.",
+      "frozenHint": "The month's landed cost as it went into the accounts at closing, a container with no charge counted at its FOB. It no longer changes: whatever happens next makes up the drift.",
       "liveLanded": "Landed cost to date",
       "onFob": "on {fob} purchased",
       "coef": "Landed cost ratio",
@@ -2241,7 +2363,9 @@
       "fob": "Purchase price (FOB)",
       "ofFob": "of FOB",
       "driftPosted": "The whole gap is posted.",
-      "driftPartly": "of which {outstanding} still to post"
+      "driftPartly": "of which {outstanding} still to post",
+      "frozenAtFob": "{count, plural, one {including # container with no charge, at its FOB} other {including # containers with no charge, at their FOB}}",
+      "counted": "{count, plural, one {# container counted} other {# containers counted}}"
     },
     "ready": {
       "title": "Before closing",
@@ -2250,8 +2374,9 @@
       "estimates": "{count, plural, =0 {No container carries an estimate waiting for its invoice.} one {# container still carries estimated costs.} other {# containers still carry estimated costs.}}",
       "invoices": "{count, plural, =0 {No invoice waiting for review.} one {# invoice is waiting for your review.} other {# invoices are waiting for your review.}}",
       "unallocated": "{count, plural, =0 {Every cost is allocated.} one {# cost could not be allocated.} other {# costs could not be allocated.}}",
-      "nocost": "{count, plural, =0 {Every loaded container has costs.} one {# loaded container has no cost.} other {# loaded containers have no cost.}}",
-      "norate": "{count, plural, =0 {Every order of the month has an exchange rate.} one {# order with no exchange rate: its value is unknown, the month cannot be closed.} other {# orders with no exchange rate: their value is unknown, the month cannot be closed.}}"
+      "nocost": "{count, plural, =0 {Every loaded container has charges, estimated or invoiced.} one {# loaded container has no charge, estimated or invoiced.} other {# loaded containers have no charge, estimated or invoiced.}}",
+      "norate": "{count, plural, =0 {Every order of the month has an exchange rate.} one {# order with no exchange rate: its value is unknown, the month cannot be closed.} other {# orders with no exchange rate: their value is unknown, the month cannot be closed.}}",
+      "held": "{count, plural, one {# container has charges on file waiting to be allocated} other {# containers have charges on file waiting to be allocated}}{orderCount, plural, =0 {.} one {: order {orders} has no exchange rate.} other {: orders {orders} have no exchange rate.}}"
     },
     "estimates": {
       "title": "Containers still on estimates",
@@ -2394,7 +2519,7 @@
     "none": "No link yet.",
     "row": "Created on {created} · valid until {expires}",
     "neverOpened": "Never opened",
-    "opened": "{count, plural, one {Opened # time} other {Opened # times}} · last on {when} (UTC)",
+    "opened": "{count, plural, one {Opened # time} other {Opened # times}} · last on {when} (Paris time)",
     "revoke": "Withdraw",
     "revoked": "Link withdrawn: it no longer opens.",
     "status": {
@@ -2656,13 +2781,14 @@
         "containers": "Containers arrived in the period",
         "landed": "Total landed cost",
         "estimated": "Still estimated, no invoice",
-        "withoutCost": "Containers with no cost at all",
+        "withoutCost": "Containers with no charge, estimated or invoiced",
         "toReview": "Invoices waiting for review, to date",
         "fx": "Exchange rates of the costs",
         "fxSource": "{source}: {count}",
         "findings": "Findings on the quality of the figures",
         "notCompared": "Containers not compared (no route or no size)",
-        "withoutDate": "Containers without a date, outside every period"
+        "withoutDate": "Containers without a date, outside every period",
+        "held": "Containers with charges on file waiting to be allocated"
       },
       "footer": "Drawn up from the issuer's orders and invoices. An “established” finding is a measured fact; “to check” is a question to ask, not an accusation.",
       "method": {
@@ -2711,6 +2837,7 @@
       "SAME_INVOICE_TWICE": "{count, plural, one {# invoice is recorded twice: the landed cost counts it twice.} other {# invoices are recorded twice: the landed cost counts them twice.}}",
       "CREDIT_NOTES_SKIPPED": "{count, plural, one {# credit note left out at import: check it does not refund a finding.} other {# credit notes left out at import: check none refunds a finding.}}",
       "PO_SPLIT": "{count, plural, one {# order is spread over several containers: its loads need checking.} other {# orders are spread over several containers: their loads need checking.}}",
+      "ORDERS_RATE_UNCONFIRMED": "{count, plural, one {# foreign-currency order has a rate of 1, with no date or source: set when no rate was found, it may make the value of its goods wrong (dollars counted as euros). To be checked.} other {# foreign-currency orders have a rate of 1, with no date or source: set when no rate was found, it may make the value of their goods wrong (dollars counted as euros). To be checked.}}",
       "LINES_WITHOUT_DUTY_RATE": "{count, plural, one {# order line without a duty rate: its duty follows the CIF value.} other {# order lines without a duty rate: their duty follows the CIF value.}}",
       "DUTY_GAP": "{count, plural, one {On # container, the duty paid differs from the theoretical duty by more than {pct}%: a wrong rate, or an origin preference not applied.} other {On # containers, the duty paid differs from the theoretical duty by more than {pct}%: wrong rates, or an origin preference not applied.}}",
       "DUTY_SPREAD_ON_CIF": "{count, plural, one {The duty of # container is spread on the CIF value, not along each line's duty.} other {The duty of # containers is spread on the CIF value, not along each line's duty.}}",
@@ -2742,8 +2869,9 @@
       "setType": "Set the type on the container",
       "setCoefficient": "Enter the coefficient",
       "seeCosts": "See the container's costs",
-      "deleteReversedCost": "Delete the cancelled cost on the sheet",
-      "setOrderRate": "Set the exchange rate"
+      "recordReversingCredit": "Record the credit note on the cost it cancels (the « Credit » button in the list of costs)",
+      "setOrderRate": "Set the exchange rate",
+      "checkOrderRate": "Check the order's rate"
     },
     "period": "Last quarter, {from} to {to}",
     "summary": "{blocking, plural, =0 {Nothing makes the audit wrong} one {# point would make the audit wrong} other {# points would make the audit wrong}}{limits, plural, =0 {} one { · # thing it will not be able to measure} other { · # things it will not be able to measure}}",
@@ -2760,9 +2888,18 @@
     "setRate": "Set the rate on the order"
   },
   "withoutCharge": {
-    "total": "{count, plural, one {One container has no charge yet, estimated or invoiced: its landed cost would only be its FOB. It is therefore left out of the landed cost, the coefficient, the unit costs and the margins; its goods are still counted in the FOB.} other {# containers have no charge yet, estimated or invoiced: their landed cost would only be their FOB. They are therefore left out of the landed cost, the coefficient, the unit costs and the margins; their goods are still counted in the FOB.}}",
+    "total": "{count, plural, one {One container has no charge yet, estimated or invoiced: its landed cost would only be its FOB. It is therefore left out of the landed cost, the coefficient, the unit costs and the margins, and its goods out of the purchase price those figures are set against.} other {# containers have no charge yet, estimated or invoiced: their landed cost would only be their FOB. They are therefore left out of the landed cost, the coefficient, the unit costs and the margins, and their goods out of the purchase price those figures are set against.}}",
     "count": "{count, plural, one {# container with no charge, not counted} other {# containers with no charge, not counted}}",
     "box": "No charge, estimated or invoiced: this would only be the FOB",
-    "see": "See the containers"
+    "see": "See the containers",
+    "held": "{count, plural, one {One container has charges on file that are waiting to be allocated} other {# containers have charges on file that are waiting to be allocated}}{orderCount, plural, =0 {.} one {: order {orders} has no exchange rate.} other {: orders {orders} have no exchange rate.}} {count, plural, one {Until they are, this container is left out of the landed cost, the coefficient, the unit costs and the margins, and its goods out of the purchase price those figures are set against.} other {Until they are, these containers are left out of the landed cost, the coefficient, the unit costs and the margins, and their goods out of the purchase price those figures are set against.}}",
+    "heldCount": "{count, plural, one {# container with charges waiting to be allocated, not counted} other {# containers with charges waiting to be allocated, not counted}}",
+    "heldBox": "Charges on file, waiting to be allocated{orderCount, plural, =0 {} one {: order {orders} has no exchange rate} other {: orders {orders} have no exchange rate}}",
+    "goods": "{missing, plural, =0 {Goods left out of these figures: {fob} of purchases.} one {Goods left out of these figures: {fob} of known purchases, plus # order line with no known value.} other {Goods left out of these figures: {fob} of known purchases, plus # order lines with no known value.}}",
+    "setRate": "Enter the rate of order {order}"
+  },
+  "unallocated": {
+    "held": "{count, plural, one {Cost not allocated: {costs}.} other {# costs not allocated: {costs}.}}",
+    "whole": "These are whole invoice amounts: a shipment or order invoice is counted in full, even where part of it belongs to other containers."
   }
 }

@@ -15,8 +15,12 @@ async function fail<T>(error: unknown, fallbackKey: string): Promise<ActionResul
   return { ok: false, error: await problemMessage(error, t(fallbackKey)) };
 }
 
-function normalizeAmount(raw: string): string | null {
-  const s = raw.trim().replace(/[\s  ]/g, "");
+function normalizeAmount(raw: string, { signed = false }: { signed?: boolean } = {}): string | null {
+  let s = raw.trim().replace(/[\s  ]/g, "");
+  // A line of an invoice is typed as printed: a refund keeps its minus sign (« - » or « − »). Every
+  // other amount here is positive, and a sign there is refused like any other stray character.
+  const sign = signed && /^[-−]/.test(s) ? "-" : "";
+  if (sign) s = s.slice(1);
   if (!s) return null;
   let n = s;
   if (n.includes(",") && n.includes(".")) n = n.lastIndexOf(",") > n.lastIndexOf(".") ? n.replace(/\./g, "").replace(",", ".") : n.replace(/,/g, "");
@@ -24,7 +28,7 @@ function normalizeAmount(raw: string): string | null {
     const [head, tail] = [n.slice(0, n.lastIndexOf(",")), n.slice(n.lastIndexOf(",") + 1)];
     n = tail.length <= 2 ? `${head}.${tail}` : n.replace(/,/g, "");
   }
-  return /^\d+(\.\d{1,4})?$/.test(n) ? n : null;
+  return /^\d+(\.\d{1,4})?$/.test(n) ? sign + n : null;
 }
 
 // ---------------------------------------------------------------------------- costs
@@ -78,6 +82,37 @@ export async function deleteCost(costId: string, revalidate: string): Promise<Ac
   if (error) return await fail(error, "costs.ledger.deleteFailed");
   revalidatePath(revalidate);
   return { ok: true, data: null };
+}
+
+/** A refund entered by hand on an invoiced cost. Answers with what the cost now amounts to. */
+export async function addCostCredit(
+  costId: string,
+  input: { amount: string; credit_number: string; credit_date: string },
+  revalidate: string,
+): Promise<ActionResult<{ amount: string; currency: string }>> {
+  await protectAction();
+  const amount = normalizeAmount(input.amount);
+  if (amount === null || Number(amount) <= 0) {
+    const t = await getTranslations("costs.ledger");
+    return { ok: false, error: t("creditAmountInvalid") };
+  }
+  const { data, error } = await api.POST("/api/v1/costs/{cost_id}/credits", {
+    params: { path: { cost_id: costId } },
+    body: { amount, credit_number: input.credit_number.trim() || null, credit_date: input.credit_date },
+  });
+  if (error || !data) return await fail(error, "costs.ledger.creditFailed");
+  revalidatePath(revalidate);
+  return { ok: true, data: { amount: data.amount, currency: data.currency } };
+}
+
+export async function removeCostCredit(costId: string, creditId: string, revalidate: string): Promise<ActionResult<{ amount: string; currency: string }>> {
+  await protectAction();
+  const { data, error } = await api.DELETE("/api/v1/costs/{cost_id}/credits/{credit_id}", {
+    params: { path: { cost_id: costId, credit_id: creditId } },
+  });
+  if (error || !data) return await fail(error, "costs.ledger.creditRemoveFailed");
+  revalidatePath(revalidate);
+  return { ok: true, data: { amount: data.amount, currency: data.currency } };
 }
 
 export async function previewAllocation(input: {
@@ -215,12 +250,12 @@ export async function correctInvoiceHeader(
 export async function updateInvoiceLine(
   invoiceId: string,
   lineId: string,
-  patch: { amount?: string | null; currency?: string | null; cost_type?: CostType | null; scope?: CostScope | null; target_id?: string | null; accepted?: boolean | null; description?: string | null },
+  patch: { amount?: string | null; currency?: string | null; cost_type?: CostType | null; scope?: CostScope | null; target_id?: string | null; accepted?: boolean | null; description?: string | null; credit_cost_id?: string | null },
 ): Promise<ActionResult<null>> {
   await protectAction();
   const body = { ...patch };
   if (typeof body.amount === "string") {
-    const n = normalizeAmount(body.amount);
+    const n = normalizeAmount(body.amount, { signed: true });
     if (!n) return await fail(null, "invoices.line.failed");
     body.amount = n;
   }
@@ -259,7 +294,7 @@ export async function patchInvoiceLines(invoiceId: string, lineIds: string[], pa
 }
 
 export type ConfirmInvoiceResult =
-  | { ok: true; data: { costsCreated: number; containers: { id: string; container_number: string }[]; notes: string[] } }
+  | { ok: true; data: { costsCreated: number; creditsCreated: number; containers: { id: string; container_number: string }[]; notes: string[] } }
   // `forceable` answers INVOICE_ALREADY_RECORDED only: false when the API says the override cannot
   // hold (the very same vendor, number, type, currency and target are already on file — a vendor
   // does not reuse an invoice number), so the screen does not offer it.
@@ -301,6 +336,7 @@ export async function confirmInvoice(invoiceId: string, force = false, forceReco
     ok: true,
     data: {
       costsCreated: data.costs_created,
+      creditsCreated: data.credits_created ?? 0,
       containers: (data.containers ?? []).map((c) => ({ id: c.id, container_number: c.container_number })),
       notes: data.notes ?? [],
     },
@@ -316,7 +352,7 @@ export async function addInvoiceLine(
   input: { description?: string; amount: string; currency?: string; cost_type?: CostType; scope?: CostScope; target_id?: string },
 ): Promise<ActionResult<null>> {
   await protectAction();
-  const amount = normalizeAmount(input.amount);
+  const amount = normalizeAmount(input.amount, { signed: true });
   if (amount === null) {
     const t = await getTranslations("costs.form");
     return { ok: false, error: t("amountInvalid") };
@@ -362,12 +398,14 @@ export async function reopenInvoice(invoiceId: string): Promise<ActionResult<nul
   if (error) return await fail(error, "invoices.detail.failed");
   revalidatePath(`/invoices/${invoiceId}`);
   revalidatePath("/invoices");
+  // A credit note reopened gives costs their amounts back, on screens this one does not name.
+  revalidatePath("/(app)/container/[id]", "page");
   return { ok: true, data: null };
 }
 
 // ---------------------------------------------------------------------------- estimates
 
-export async function applyEstimates(containerId: string): Promise<ActionResult<{ created: number; skipped: Record<string, string> }>> {
+export async function applyEstimates(containerId: string): Promise<ActionResult<{ created: number; skipped: Record<string, Schemas["EstimateSkip"]> }>> {
   await protectAction();
   const { data, error } = await api.POST("/api/v1/containers/{container_id}/estimates", { params: { path: { container_id: containerId } } });
   if (error || !data) return await fail(error, "estimates.failed");
@@ -515,7 +553,7 @@ export async function validateImport(
   importId: string,
   mapping: Record<string, string>,
   options: { defaultCostType?: CostType | null; labelTypes?: Record<string, CostType>; forceDuplicates?: boolean } = {},
-): Promise<ActionResult<ImportJobResponse> | { ok: false; error: string; oneOf: string[] }> {
+): Promise<ActionResult<ImportJobResponse> | { ok: false; error: string; oneOf: string[] } | { ok: false; error: string; report: Schemas["ImportReport"] }> {
   await protectAction();
   const { data, error } = await api.POST("/api/v1/imports/{import_id}/validate", {
     params: { path: { import_id: importId } },
@@ -527,9 +565,11 @@ export async function validateImport(
     },
   });
   if (error || !data) {
-    const p = error as (Problem & { one_of?: string[] }) | undefined;
+    const p = error as (Problem & { one_of?: string[]; report?: Schemas["ImportReport"] }) | undefined;
     // Columns that go together (a credit column needs its account): the screen names them by their headers.
     if (p?.code === "MAPPING_INCOMPLETE" && p.one_of?.length) return { ok: false, error: "", oneOf: p.one_of };
+    // Every row refused: the report says which and why, row by row, where a bare sentence would not.
+    if (p?.code === "NO_VALID_ROWS" && p.report) return { ok: false, error: "", report: p.report };
     if (p?.code === "INVOICE_LINE_ALREADY_RECORDED" && !p.errors?.length) {
       const t = await getTranslations("importWizard.review");
       return { ok: false, error: t("lineRecordedMeanwhile") };
@@ -814,6 +854,18 @@ export async function pushErpLandedCost(containerId: string): Promise<ActionResu
   await protectAction();
   const { data, error } = await api.POST("/api/v1/containers/{container_id}/erp/landed-cost", { params: { path: { container_id: containerId } } });
   if (error || !data) return await fail(error, "erp.push.pushFailed");
+  revalidatePath(`/container/${containerId}`);
+  return { ok: true, data };
+}
+
+/** Say the difference shown on a cost is entered by hand in the ERP, so a later change on it asks only for its own. */
+export async function enterErpDifferenceByHand(containerId: string, costId: string, difference: string): Promise<ActionResult<ErpLandedCostPreview>> {
+  await protectAction();
+  const { data, error } = await api.POST("/api/v1/containers/{container_id}/erp/landed-cost/by-hand", {
+    params: { path: { container_id: containerId } },
+    body: { cost_id: costId, difference },
+  });
+  if (error || !data) return await fail(error, "erp.push.byHandFailed");
   revalidatePath(`/container/${containerId}`);
   return { ok: true, data };
 }

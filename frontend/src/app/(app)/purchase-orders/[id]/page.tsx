@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
 import Link from "next/link";
-import { AlertTriangle, FileText, Info } from "lucide-react";
+import { FileText, Info } from "lucide-react";
 import { PageHeader, btnSecondary, td, tdRight, th, thRight } from "@/components/layout/AppShell";
 import Breadcrumb from "@/components/shared/Breadcrumb";
 import CollapsibleSection from "@/components/shared/CollapsibleSection";
@@ -11,6 +11,7 @@ import AddCostForm from "@/features/costs/AddCostForm";
 import AllocationPanel from "@/features/costs/AllocationPanel";
 import CostBreakdown from "@/features/costs/CostBreakdown";
 import ReportTotals from "@/features/costs/ReportTotals";
+import UnallocatedWarnings from "@/features/costs/UnallocatedWarnings";
 import EstimatePanel from "@/features/estimates/EstimatePanel";
 import RateForm from "@/features/purchase-orders/RateForm";
 import FobMissing from "@/features/report/FobMissing";
@@ -19,7 +20,7 @@ import OpenOnHash from "@/components/shared/OpenOnHash";
 import WorkflowNextStep from "@/features/workflow/WorkflowNextStep";
 import { purchaseOrderDetailStep } from "@/features/workflow/steps";
 import { api } from "@/lib/api/client";
-import { dateShort, pct, qty } from "@/lib/format";
+import { dateShort, decimalDisplay, pct, qty, rate } from "@/lib/format";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -75,6 +76,7 @@ export default async function PurchaseOrderPage({ params }: Params) {
     getTranslations("sheet"),
     getLocale(),
   ]);
+  const measure = (v: string) => decimalDisplay(v.includes(".") ? v.replace(/0+$/, "").replace(/\.$/, "") : v, locale);
   const cur = report.base_currency;
   const revalidate = `/purchase-orders/${po.id}`;
   const step = purchaseOrderDetailStep(report, firstContainer);
@@ -85,29 +87,17 @@ export default async function PurchaseOrderPage({ params }: Params) {
       <Breadcrumb backHref="/purchase-orders" backLabel={t("breadcrumb")} />
       <PageHeader
         title={po.po_number}
-        subtitle={<span>{po.supplier_name ?? t("noSupplier")} · {po.currency}{po.currency !== cur ? (po.fx_rate ? ` @ ${po.fx_rate} ${cur}` : ` · ${t("noRate", { currency: po.currency, base: cur })}`) : ""}{po.order_date ? ` · ${t("ordered", { date: dateShort(po.order_date, locale) })}` : ""}{po.incoterm ? ` · ${po.incoterm}` : ""}</span>}
+        subtitle={<span>{po.supplier_name ?? t("noSupplier")} · {po.currency}{po.currency !== cur ? (po.fx_rate ? ` @ ${rate(po.fx_rate, locale)} ${cur}${po.rate_unconfirmed ? ` · ${t("rateUnconfirmed")}` : ""}` : ` · ${t("noRate", { currency: po.currency, base: cur })}`) : ""}{po.order_date ? ` · ${t("ordered", { date: dateShort(po.order_date, locale) })}` : ""}{po.incoterm ? ` · ${po.incoterm}` : ""}</span>}
         actions={report.lines.length > 0 ? <Link href={`/purchase-orders/${po.id}/report`} className={btnSecondary}><FileText className="w-4 h-4 mr-1.5" aria-hidden />{ts("actions.open")}</Link> : null}
       />
 
       {po.currency !== cur ? (
-        <RateForm poId={po.id} currency={po.currency} base={cur} current={po.fx_rate} rateDate={po.fx_date} needsDate={!po.fx_date && !po.order_date} canEdit={canEdit} />
+        <RateForm poId={po.id} currency={po.currency} base={cur} current={po.fx_rate} rateDate={po.fx_date} forDay={po.fx_date ?? po.order_date ?? null} source={po.fx_source ?? null} unconfirmed={po.rate_unconfirmed ?? false} needsDate={!po.fx_date && !po.order_date} canEdit={canEdit} />
       ) : null}
 
       <WorkflowNextStep step={step} />
 
-      {report.warnings.length > 0 ? (
-        <div className="rounded-md border border-amber-200 bg-amber-50 text-amber-800 text-sm px-4 py-3 space-y-1 mb-6">
-          {report.warnings.map((w) => (
-            <div key={w.cost_id} className="flex gap-2">
-              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-              <span>
-                {errorCode.has(w.code) ? errorCode(w.code) : w.message}
-                {w.load_labels?.length ? <span className="text-amber-700/80"> {w.load_labels.join(", ")}</span> : null}
-              </span>
-            </div>
-          ))}
-        </div>
-      ) : null}
+      <UnallocatedWarnings report={report} />
 
       {/* `report.notes`: a rule applied to a cost that WAS allocated — kept apart from `warnings`,
           never carries an amount. See the container page for the same block. */}
@@ -150,8 +140,9 @@ export default async function PurchaseOrderPage({ params }: Params) {
                     <td className={td}><div>{l.sku ?? tc("empty")}</div><div className="text-xs text-slate-500">{l.description}</div></td>
                     <td className={tdRight}>{qty(l.quantity, locale)}</td>
                     <td className={tdRight}>{qty(l.unit_price, locale)}</td>
-                    <td className={`${tdRight} text-slate-500`}>{l.unit_weight_kg ? qty(l.unit_weight_kg, locale) : tc("empty")}</td>
-                    <td className={`${tdRight} text-slate-500`}>{l.unit_volume_cbm ? qty(l.unit_volume_cbm, locale) : tc("empty")}</td>
+                    {/* Every digit the API keeps, trailing zeros aside: 0,00012 kg shown as 0,0001 is a sixth of the freight basis gone. */}
+                    <td className={`${tdRight} text-slate-500`}>{l.unit_weight_kg ? measure(l.unit_weight_kg) : tc("empty")}</td>
+                    <td className={`${tdRight} text-slate-500`}>{l.unit_volume_cbm ? measure(l.unit_volume_cbm) : tc("empty")}</td>
                     <td className={`${tdRight} text-slate-500`}>{l.duty_rate ? pct(Number(l.duty_rate) * 100, locale) : tc("empty")}</td>
                   </tr>
                 ))}

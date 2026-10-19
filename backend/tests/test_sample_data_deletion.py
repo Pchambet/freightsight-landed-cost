@@ -166,6 +166,25 @@ def test_a_cost_from_an_invoice_i_uploaded_stops_the_deletion(
     } in res.json()["errors"]
 
 
+def test_a_refund_i_recorded_on_a_demo_cost_stops_the_deletion(client: TestClient) -> None:
+    """A credit is the user's own record of money the forwarder gave back: deleting the demo would
+    take it away with the demo's cost, without a word."""
+    sample = client.post("/api/v1/organization/sample-data", params={"profile": "history"}).json()
+    demo = next(
+        c for c in client.get("/api/v1/costs").json()
+        if c["container_id"] in sample["container_ids"] and c["status"] == "ACTUAL"
+    )  # fmt: skip
+    res = client.post(
+        f"/api/v1/costs/{demo['id']}/credits",
+        json={"amount": "10.00", "credit_number": "AV-MOI-1", "credit_date": "2026-09-30"},
+    )
+    assert res.status_code == 201, res.text
+
+    res = client.delete("/api/v1/organization/sample-data")
+    assert res.status_code == 409
+    assert "OWN_COST_ON_SAMPLE" in {e["code"] for e in res.json()["errors"]}
+
+
 def test_there_is_nothing_to_delete_in_an_organization_that_never_loaded_it(client: TestClient) -> None:
     res = client.delete("/api/v1/organization/sample-data")
     assert res.status_code == 404 and res.json()["code"] == "NO_SAMPLE_DATA"

@@ -105,6 +105,22 @@ export default async function SkuPage({ params }: Params) {
   const unrated = arrivals.find((a) => a.fob_missing);
   const rateHref = unrated ? `/purchase-orders/${unrated.po_id}#taux` : "/purchase-orders";
   const marginLanded = s.last_unit_landed ?? s.unit_landed;
+  // The purchase price the margin "on FOB" is read from is that of the same goods: the last arrival's
+  // when the real margin is the last arrival's, else the average over the counted containers. The
+  // average of every arrival beside the last one's landed cost read 45,5 % for 44,9 %.
+  const onLast = s.last_unit_landed !== null && last !== undefined && last.unit_landed === s.last_unit_landed;
+  const marginFob = onLast ? last.unit_fob : (s.unit_charged_fob ?? s.unit_fob);
+  // The purchase price beside the landed one is over the same goods: the containers that carry a
+  // charge. Units still at sea (dated by an ETA) are not "received".
+  const charged = Number(s.charged_quantity ?? 0);
+  const counted = charged > 0 && s.containers_without_charge > 0;
+  const received = Number(s.received_quantity ?? s.quantity);
+  const onTheWay = Number(s.quantity) - received;
+  const fobSub = [
+    t("detail.quantity", { qty: qty(received, locale) }),
+    onTheWay > 0 ? t("detail.onTheWay", { qty: qty(onTheWay, locale) }) : null,
+    counted ? t("detail.counted", { qty: qty(charged, locale) }) : null,
+  ].filter(Boolean).join(" · ");
 
   return (
     <>
@@ -115,12 +131,12 @@ export default async function SkuPage({ params }: Params) {
       />
 
       <FobMissing lines={s.fob_missing_lines} href={rateHref} className="mb-6" />
-      <WithoutCharge containers={s.containers_without_charge} className="mb-6" />
+      <WithoutCharge of={s} className="mb-6" />
 
       <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 mb-6">
         <StatTile label={t("detail.unitLanded")} hint={t("detail.unitLandedHint")} value={money(s.unit_landed, currency, locale)} sub={estimatedBoxes > 0 ? `${coefText} · ${t("detail.withEstimates", { count: estimatedBoxes })}` : s.has_estimates ? `${coefText} · ${t("detail.withEstimatesUncounted")}` : coefText} />
         <StatTile label={t("detail.last")} hint={t("kpi.changeHint")} value={s.last_unit_landed !== null ? money(s.last_unit_landed, currency, locale) : "—"} sub={s.change_pct !== null ? <><ChangeBadge value={s.change_pct} locale={locale} /> <span className="ml-1">{t("detail.vsPrevious")}</span></> : last?.unit_landed === null || previous?.unit_landed === null ? tm("line") : t("detail.oneArrival")} spark={landedOnes.filter((a) => a.unit_landed !== null).map((a) => Number(a.unit_landed))} />
-        <StatTile label={t("detail.unitFob")} value={money(s.unit_fob, currency, locale)} sub={t("detail.quantity", { qty: qty(s.quantity, locale) })} />
+        <StatTile label={t("detail.unitFob")} value={money(counted ? s.unit_charged_fob ?? null : s.unit_fob, currency, locale)} sub={fobSub} />
         <StatTile
           label={t("detail.margin")}
           hint={t("kpi.marginHint")}
@@ -186,7 +202,7 @@ export default async function SkuPage({ params }: Params) {
                     <td className="px-3 py-2.5 text-right tabular-nums font-medium text-slate-900 whitespace-nowrap">
                       {money(a.unit_landed, currency, locale)}
                       {Number(a.estimated) > 0 ? <span className="ml-1.5 rounded bg-violet-50 px-1 py-0.5 text-[11px] font-medium text-violet-800">{t("estimated")}</span> : null}
-                      {a.without_charge ? <WithoutChargeLine /> : null}
+                      <WithoutChargeLine box={a} />
                     </td>
                     <td className="px-5 py-2.5 text-right tabular-nums text-slate-600">{a.fob !== null && a.landed !== null && Number(a.fob) > 0 ? ratio(Number(a.landed) / Number(a.fob)) : "—"}</td>
                   </tr>
@@ -196,13 +212,13 @@ export default async function SkuPage({ params }: Params) {
           </div>
         </Panel>
 
-        <Panel title={t("margin.title")} subtitle={t("margin.subtitle")}>
-          {s.unit_fob !== null && marginLanded !== null ? (
-            <MarginHelper unitFob={Number(s.unit_fob)} unitLanded={Number(marginLanded)} marginOnLanded={s.last_unit_landed !== null ? s.last_margin_pct : s.margin_pct} salePrice={salePrice} currency={currency} />
+        <Panel title={t("margin.title")} subtitle={onLast ? t("margin.subtitle") : t("margin.subtitleAverage")}>
+          {marginFob !== null && marginLanded !== null ? (
+            <MarginHelper unitFob={Number(marginFob)} unitLanded={Number(marginLanded)} marginOnLanded={s.last_unit_landed !== null ? s.last_margin_pct : s.margin_pct} salePrice={salePrice} currency={currency} />
           ) : s.fob_missing_lines ? (
             <FobMissing lines={s.fob_missing_lines} href={rateHref} />
           ) : (
-            <WithoutCharge containers={s.containers_without_charge} href={null} />
+            <WithoutCharge of={s} href={null} />
           )}
         </Panel>
       </div>

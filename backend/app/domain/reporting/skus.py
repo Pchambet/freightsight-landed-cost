@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.core.money import q2, q4
 from app.domain.costing.engine import EXCLUDED_FROM_LANDED
-from app.domain.costing.service import Computation, charged_containers
+from app.domain.costing.service import Computation, charged_containers, held_containers
 from app.domain.costing.value import FX_RATE_MISSING, coefficient, missing_code, total
 from app.domain.models import CostStatus, Organization, Product
 from app.domain.reporting.service import arrival_date
@@ -52,6 +52,9 @@ class SkuArrival:
     estimated: Decimal
     fob_missing: str | None = None
     without_charge: bool = False
+    #: Its container's charges are entered but held, by these orders' missing rates (`held_containers`).
+    charges_held: bool = False
+    held_orders: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -74,6 +77,8 @@ class SkuBox:
     fob_missing: str | None = None
     fob_missing_lines: int = 0
     without_charge: bool = False
+    charges_held: bool = False
+    held_orders: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -111,6 +116,14 @@ class SkuSummary:
     fob_missing: str | None = None
     fob_missing_lines: int = 0
     containers_without_charge: int = 0
+    containers_held: int = 0
+    held_orders: list[str] = field(default_factory=list)
+    #: The unit purchase price of the goods `unit_landed` is over: those whose container carries a
+    #: charge. `unit_fob` is over every line, `charged_quantity` says how many units this one counts.
+    unit_charged_fob: Decimal | None = None
+    #: Units in containers that have actually landed (a discharge or an arrival on record): a box still
+    #: on its way, dated by the shipment's ETA, is in `quantity` and not received.
+    received_quantity: Decimal = Decimal(0)
 
     @property
     def charged(self) -> bool:
@@ -140,6 +153,7 @@ def sku_report(
             estimated[allocation.load_id] += allocation.amount_base
 
     charged = charged_containers(comp)
+    held = held_containers(comp)
     summaries: dict[str, SkuSummary] = {}
     for load in comp.loads:
         row = comp.load_rows[load.id]
@@ -181,6 +195,8 @@ def sku_report(
                 estimated=q2(estimated.get(load.id, ZERO)),
                 fob_missing=None if load.value_known else FX_RATE_MISSING,
                 without_charge=uncharged,
+                charges_held=container.id in held,
+                held_orders=list(held.get(container.id, ())),
             )
         )
 
@@ -227,6 +243,8 @@ def _box(points: list[SkuArrival]) -> SkuBox:
         fob_missing=missing_code(missing),
         fob_missing_lines=missing,
         without_charge=first.without_charge,
+        charges_held=first.charges_held,
+        held_orders=first.held_orders,
     )
 
 
@@ -253,6 +271,11 @@ def _summarise(summary: SkuSummary, product: Product | None, org: Organization) 
     summary.landed = None if landed is None else q2(landed)
     summary.charged_fob = None if charged_fob is None else q2(charged_fob)
     summary.charged_quantity = charged_quantity
+    summary.unit_charged_fob = _per_unit(charged_fob, charged_quantity) if charged else None
+    summary.received_quantity = sum(
+        (p.quantity for p in summary.points if p.arrived_on is not None and not p.arrival_is_estimate),
+        Decimal(0),
+    )
     summary.coefficient = coefficient(landed, charged_fob)
     # Weighted by quantity: the same article landed twice at two costs is one number, not their mean.
     summary.unit_fob = _per_unit(fob, quantity)
@@ -260,6 +283,8 @@ def _summarise(summary: SkuSummary, product: Product | None, org: Organization) 
     summary.has_estimates = any(p.estimated > 0 for p in summary.points)
     summary.arrivals = len({p.container_id for p in summary.points})
     summary.containers_without_charge = len({p.container_id for p in summary.points if p.without_charge})
+    summary.containers_held = len({p.container_id for p in summary.points if p.charges_held})
+    summary.held_orders = sorted({order for p in summary.points for order in p.held_orders})
 
     grouped: dict[UUID, list[SkuArrival]] = defaultdict(list)
     for point in summary.points:

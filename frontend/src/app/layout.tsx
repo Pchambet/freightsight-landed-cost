@@ -1,6 +1,7 @@
 import { ClerkProvider } from "@clerk/nextjs";
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { headers } from "next/headers";
 import { NextIntlClientProvider } from "next-intl";
 import { getLocale, getTranslations } from "next-intl/server";
 import { Toaster } from "sonner";
@@ -27,6 +28,8 @@ export async function generateMetadata(): Promise<Metadata> {
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const locale = await getLocale();
+  // The proxy's per-request nonce: without it the Content-Security-Policy blocks Clerk's script tag.
+  const nonce = (await headers()).get("x-nonce") ?? undefined;
   return (
     <html lang={locale} className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
       <body className="min-h-full flex flex-col bg-slate-50 text-slate-900">
@@ -35,7 +38,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             would only make those pages heavier. The application's own layout provides the messages its
             client components use; a client component outside it brings its own (see ProductShowcase). */}
         <NextIntlClientProvider messages={null}>
-          <ClerkProvider localization={clerkLocalization(locale)} taskUrls={{ "choose-organization": "/choose-organization" }} afterSignOutUrl="/">
+          <ClerkProvider nonce={nonce} localization={clerkLocalization(locale)} taskUrls={{ "choose-organization": "/choose-organization" }} afterSignOutUrl="/">
             {children}
             <Toaster position="top-right" richColors />
           </ClerkProvider>

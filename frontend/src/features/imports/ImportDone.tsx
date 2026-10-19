@@ -8,10 +8,13 @@ import type { ImportJobResponse } from "@/lib/api/client";
 import { NEXT_IMPORT_KIND, type ImportKind } from "@/lib/domain";
 import { money } from "@/lib/format";
 
+/** How many orders without a rate are named one by one; the rest are counted. */
+const NAMED = 8;
+
 /**
  * What the import unlocked, in words — « 23 conteneurs datés », « 212 coûts créés pour 48 310,00 € » —
  * then where to go: the next file of the quarter, the audit's preparation list, and, for a costs file,
- * the way back.
+ * the way back. The orders a file left without a rate are named, each a link, since each needs one.
  */
 export default function ImportDone({ job, baseCurrency, onAnother }: { job: ImportJobResponse; baseCurrency: string; onAnother: (next?: ImportKind) => void }) {
   const t = useTranslations("importWizard.done");
@@ -46,17 +49,28 @@ export default function ImportDone({ job, baseCurrency, onAnother }: { job: Impo
       lines.push(t("summary", { pos: r.purchase_orders_created ?? 0, lines: r.lines_created ?? 0, containers: r.containers_created ?? 0, loads: r.loads_created ?? 0 }));
   }
   if (skipped) lines.push(t("skipped", { rows: skipped }));
+  const withoutRate = job.kind === "PURCHASE_ORDERS" ? (r.orders_without_rate ?? []) : [];
   const next = NEXT_IMPORT_KIND[job.kind];
   return (
     <div className="p-5 space-y-4 text-sm">
       <ul className="space-y-1 text-slate-800">
         {lines.map((l) => <li key={l}>{l}</li>)}
+        {withoutRate.length ? (
+          <li className="text-amber-800">
+            {t("withoutRate", { count: withoutRate.length })}{" "}
+            {withoutRate.slice(0, NAMED).map((po, i) => (
+              <span key={po}>{i ? ", " : ""}<Link href={`/purchase-orders?q=${encodeURIComponent(po)}`} className="font-medium underline underline-offset-2 hover:no-underline">{po}</Link></span>
+            ))}
+            {withoutRate.length > NAMED ? ` ${t("withoutRateMore", { count: withoutRate.length - NAMED })}` : null}
+          </li>
+        ) : null}
       </ul>
       <div className="flex flex-wrap items-center gap-2">
         {next ? (
           <button type="button" onClick={() => onAnother(next)} className={btnPrimary}>{t("next", { kind: tk(`${next}.title`) })}</button>
         ) : null}
-        <Link href="/cost-audit" className={next ? btnSecondary : btnPrimary}>{t("prepareAudit")}</Link>
+        {/* After a costs file the card above already opens the audit's preparation: one button, not two. */}
+        {job.kind === "COSTS" ? null : <Link href="/cost-audit" className={next ? btnSecondary : btnPrimary}>{t("prepareAudit")}</Link>}
         <button type="button" onClick={() => onAnother()} className={btnSecondary}>{t("another")}</button>
         {job.kind === "COSTS" && job.can_undo ? <UndoImportButton importId={job.id} costCount={r.costs_created ?? 0} estimatesReplaced={r.estimates_replaced ?? 0} onUndone={() => onAnother()} /> : null}
       </div>

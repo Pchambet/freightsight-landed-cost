@@ -77,6 +77,13 @@ export function useIssueSentence(kind: ImportKind, fieldName: (field: string) =>
       case "FX_RATE_DEFAULTED":
       case "FX_RATE_APPLIED":
         return { ...out, rate_date: dateShort(p.rate_date, locale), rate: formatRate(p.rate, locale) };
+      case "FX_RATE_FROM_FILE":
+        return { ...out, rate: formatRate(p.rate, locale) };
+      case "FX_RATE_INVERTED":
+      case "FX_RATE_FAR_FROM_ECB":
+        return { ...out, rate_date: dateShort(p.rate_date, locale), rate: formatRate(p.rate, locale), ecb_rate: formatRate(p.ecb_rate, locale) };
+      case "FX_RATE_DIFFERS_IN_ORDER":
+        return { ...out, rate: formatRate(p.rate, locale), kept: formatRate(p.kept, locale) };
       case "FX_RATE_UNAVAILABLE":
         return { ...out, date: asDay(p.date ?? "") };
       case "FX_RATE_MISSING":

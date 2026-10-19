@@ -449,7 +449,7 @@ class OdooConnector:
             if product_ids
             else {}
         )
-        po_line_numbers = self._po_numbers_by_line(moves)
+        po_line_numbers = self._po_numbers_by_line(moves, {int(o["id"]): str(o["name"]) for o in orders})
 
         by_picking: dict[int, list[ErpReceiptLine]] = {}
         for move in moves:
@@ -482,12 +482,20 @@ class OdooConnector:
             for picking in pickings
         ]
 
-    def _po_numbers_by_line(self, moves: list[dict[str, Any]]) -> dict[int, str]:
+    def _po_numbers_by_line(self, moves: list[dict[str, Any]], names: dict[int, str]) -> dict[int, str]:
+        """`purchase line id -> its order's name`. Not `order_id`'s label: that is the display name,
+        which Odoo extends with the supplier's reference ("P00012 (PI-2026-55)"), and read as another
+        order's it left every line of such an order unmatched. The name is what the orders were found
+        by; an order not asked for keeps its label, which only has to say it is another one."""
         line_ids = sorted({m["purchase_line_id"][0] for m in moves if m.get("purchase_line_id")})
         if not line_ids:
             return {}
         lines = self._kw("purchase.order.line", "read", line_ids, fields=["order_id"])
-        return {int(line["id"]): str(line["order_id"][1]) for line in lines if line.get("order_id")}
+        return {
+            int(line["id"]): names.get(int(line["order_id"][0]), str(line["order_id"][1]))
+            for line in lines
+            if line.get("order_id")
+        }
 
     def create_landed_cost(
         self,

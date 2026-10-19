@@ -67,6 +67,8 @@ export default function ImportWizard({
   const [mappingError, setMappingError] = useState<string | null>(null);
   const [changed, setChanged] = useState<{ before: Report; after: Report } | null>(null);
   const [existingId, setExistingId] = useState<string | null>(null);
+  // A file the API refused stays refused on the page (a toast fades while the file still looks taken).
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const tooLarge = isTooLarge(file);
 
@@ -88,7 +90,10 @@ export default function ImportWizard({
   // warning sits beside it once a preview has detected the ambiguity — or a weight column left unread
   // because only a person can say which it is.
   const unitColumnWarning = (field: string) => warnings.find((w) => (w.code === "UNIT_COLUMN_AMBIGUOUS" || w.code === "UNIT_COLUMN_UNMAPPED") && w.field === field);
-  const errorRows = new Set(errors.map((e) => e.row)).size;
+  // What the import leaves out is the report's own count, not the rows that carry an error: a box or a
+  // bill refused whole drops rows with no error of their own, and so does a refund with the line it cancels.
+  const leftOut = report ? Math.max(report.row_count - report.valid_rows, 0) : 0;
+  const leftWithoutError = Math.max(leftOut - new Set(errors.map((e) => e.row)).size, 0);
   const missingRequired = fields.filter((f) => f.required && !mapping[f.field]).map((f) => fieldName(f.field));
   const missingOneOf = (info?.required_one_of ?? []).filter((group) => !group.some((f) => mapping[f])).map((group) => group.map(fieldName));
 
@@ -102,6 +107,7 @@ export default function ImportWizard({
     setMappingError(null);
     setChanged(null);
     setExistingId(null);
+    setUploadError(null);
     if (next) setKind(next);
     setStep("upload");
   };
@@ -114,12 +120,13 @@ export default function ImportWizard({
     startTransition(async () => {
       // Refused before the action runs (connection dropped, a body over a limit): it rejects.
       const result = await createImport(fd).catch(() => null);
-      if (!result) return void toast.error(t("upload.failed"));
+      if (!result) return void setUploadError(t("upload.failed"));
       if (!result.ok) {
         if (result.existingId) return void setExistingId(result.existingId);
-        return void toast.error(result.error);
+        return void setUploadError(result.error);
       }
       setExistingId(null);
+      setUploadError(null);
       setJob(result.data);
       setMapping(result.data.mapping);
       setStep("mapping");
@@ -132,6 +139,16 @@ export default function ImportWizard({
     const force = next.forceDuplicates ?? forceDuplicates;
     startTransition(async () => {
       const result = await validateImport(job.id, mapping, { defaultCostType: defaultCostType || null, labelTypes: types, forceDuplicates: force });
+      if (!result.ok && "report" in result) {
+        // Nothing to import, but the refusals are the answer: the review shows them, import disabled.
+        setMappingError(null);
+        setLabelTypes(types);
+        setForceDuplicates(force);
+        setJob({ ...job, report: result.report });
+        setChanged(null);
+        setStep("review");
+        return;
+      }
       if (!result.ok) {
         const message = "oneOf" in result ? t("mapping.oneOf", { count: result.oneOf.length, fields: result.oneOf.map(fieldName).join(", ") }) : result.error;
         if (step !== "mapping") toast.error(message);
@@ -199,7 +216,12 @@ export default function ImportWizard({
   // Before → after, in money for a costs file, in rows otherwise.
   const changedFigure = (r: Report) => (r.money ? money(r.money.total_base, baseCurrency, locale) : t("review.rowsCount", { count: r.valid_rows }));
 
-  const wizardStep = importWizardStep(step, job !== null && step === "upload", errors.length > 0, activeKind);
+  // Whether the file puts its orders in containers is whether it has a container column: a file read
+  // again creates and changes no load, yet its orders are in their containers all the same.
+  const ordersOutcome = job && step === "done" && job.kind === "PURCHASE_ORDERS"
+    ? { withoutRate: job.report.orders_without_rate ?? [], loaded: Boolean(mapping.container_number) }
+    : undefined;
+  const wizardStep = importWizardStep(step, job !== null && step === "upload", errors.length > 0, activeKind, ordersOutcome);
 
   return (
     <div className="space-y-6">
@@ -219,25 +241,26 @@ export default function ImportWizard({
       {step === "upload" ? (
         <Card title={t("upload.card")}>
           <div className="p-5 space-y-5">
-            <KindPicker kinds={kinds} value={kind} onChange={(k) => { setKind(k); setExistingId(null); }} />
+            <KindPicker kinds={kinds} value={kind} onChange={(k) => { setKind(k); setExistingId(null); setUploadError(null); }} />
             <div className="max-w-xl space-y-4">
               <label className="relative border-2 border-dashed border-slate-300 rounded-md p-8 flex flex-col items-center justify-center text-center hover:bg-slate-50 cursor-pointer">
                 <input
                   type="file"
                   accept=".csv,.xlsx,text/csv"
-                  onChange={(e) => { setFile(e.target.files?.[0] ?? null); setExistingId(null); }}
+                  onChange={(e) => { setFile(e.target.files?.[0] ?? null); setExistingId(null); setUploadError(null); }}
                   className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                   aria-label={t("upload.chooseFor", { kind: t(`kinds.${kind}.title`) })}
-                  aria-invalid={tooLarge || undefined}
-                  aria-describedby={tooLarge ? "import-file-too-large" : undefined}
+                  aria-invalid={tooLarge || Boolean(uploadError) || undefined}
+                  aria-describedby={tooLarge ? "import-file-too-large" : uploadError ? "import-file-refused" : undefined}
                 />
                 {file ? (
-                  <>{tooLarge ? <FileWarning className="w-8 h-8 text-red-600 mb-2" aria-hidden /> : <CheckCircle2 className="w-8 h-8 text-emerald-500 mb-2" aria-hidden />}<p className="text-sm font-medium">{file.name}</p><p className="text-xs text-slate-500 mt-1">{fileSize(file.size, locale)}</p></>
+                  <>{tooLarge || uploadError ? <FileWarning className="w-8 h-8 text-red-600 mb-2" aria-hidden /> : <CheckCircle2 className="w-8 h-8 text-emerald-500 mb-2" aria-hidden />}<p className="text-sm font-medium">{file.name}</p><p className="text-xs text-slate-500 mt-1">{fileSize(file.size, locale)}</p></>
                 ) : (
                   <><FileType className="w-8 h-8 text-slate-400 mb-2" aria-hidden /><p className="text-sm font-medium text-slate-700">{t("upload.cta")}</p><p className="text-xs text-slate-500 mt-1">{t("upload.hint")}</p></>
                 )}
               </label>
               {tooLarge ? <FileTooLarge id="import-file-too-large" file={file} kind="import" /> : null}
+              {uploadError ? <p id="import-file-refused" role="alert" className="text-sm text-red-700">{uploadError}</p> : null}
               {existingId ? (
                 <p role="alert" className="text-sm text-amber-900">
                   {t("upload.alreadyImported")}{" "}
@@ -325,7 +348,10 @@ export default function ImportWizard({
             ) : null}
             {errors.length ? (
               <IssueGroups
-                title={t("review.errorSummary", { rows: errorRows, errors: errors.length })}
+                title={[
+                  t("review.errorSummary", { rows: leftOut, total: report.row_count, errors: errors.length }),
+                  leftWithoutError ? t("review.leftWithoutError", { count: leftWithoutError, kind: job.kind }) : "",
+                ].join(" ").trim()}
                 issues={errors}
                 tone="red"
                 kind={job.kind}

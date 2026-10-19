@@ -15,7 +15,7 @@ from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy import select, text
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import InstrumentedAttribute, Session
 
 from app.core.errors import Unprocessable
 from app.core.money import to_base
@@ -38,6 +38,12 @@ _SCOPE_KEY = {
     CostScope.PO: "po_id",
     CostScope.PO_LINE: "po_line_id",
 }
+
+
+def target_column(scope: CostScope) -> InstrumentedAttribute[UUID | None]:
+    """The column of `costs` a cost of this scope names its target in."""
+    column: InstrumentedAttribute[UUID | None] = getattr(Cost, _SCOPE_KEY[scope])
+    return column
 
 
 def loads_under(comp: Computation, scope: CostScope, target_id: UUID) -> list[engine.Load]:
@@ -121,7 +127,7 @@ def open_estimates(
     db: Session, org_id: UUID, scope: CostScope, target_id: UUID, cost_type: CostType
 ) -> list[Cost]:
     """Estimates of this type, on this exact target, still standing and not yet replaced."""
-    column = getattr(Cost, _SCOPE_KEY[scope])
+    column = target_column(scope)
     taken = select(Cost.supersedes_cost_id).where(Cost.org_id == org_id, Cost.supersedes_cost_id.is_not(None))
     return list(
         db.scalars(

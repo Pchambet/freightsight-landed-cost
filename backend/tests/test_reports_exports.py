@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select, text
+from sqlalchemy import select, text, update
 from sqlalchemy.orm import Session
 
 from app.core.tenancy import set_current_org
@@ -552,3 +552,25 @@ def test_exports_only_ever_see_one_organization(client: TestClient, db: Session,
     other = client.get("/api/v1/exports/landed-costs.csv", headers={"X-Org-Id": str(uuid.uuid4())})
     _, rows = parse_csv(other.content, "fr")
     assert rows == []
+
+
+def test_a_per_unit_weight_and_volume_keep_every_stored_digit(client: TestClient, db: Session) -> None:
+    """The order file is re-imported: a weight rounded to four decimals there is rounded for good."""
+    from app.domain.models import PurchaseOrderLine
+
+    line = {"line_no": 1, "sku": "VIS", "quantity": "2000000", "unit_price": "0.01", "unit_weight_kg": "1.5"}
+    body = {"po_number": "PO-VIS", "currency": "EUR", "order_date": "2026-09-01", "lines": [line]}
+    order = client.post("/api/v1/purchase-orders", json=body).json()
+    weight, volume = Decimal("0.00012345678901"), Decimal("0.0000012345678901")
+    db.execute(
+        update(PurchaseOrderLine)
+        .where(PurchaseOrderLine.id == uuid.UUID(order["lines"][0]["id"]))
+        .values(unit_weight_kg=weight, unit_volume_cbm=volume)
+    )
+    db.flush()
+
+    (shown,) = client.get(f"/api/v1/purchase-orders/{order['id']}").json()["lines"]
+    assert (shown["unit_weight_kg"], shown["unit_volume_cbm"]) == ("0.00012345678901", "0.0000012345678901")
+    header, rows = parse_csv(client.get("/api/v1/exports/purchase-orders.csv").content, "fr")
+    (row,) = [cells(header, r) for r in rows]
+    assert (row["unit_weight_kg"], row["unit_volume_cbm"]) == ("0,00012345678901", "0,0000012345678901")

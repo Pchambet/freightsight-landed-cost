@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getLocale, getTranslations } from "next-intl/server";
 import { Card } from "@/components/layout/AppShell";
 import { FobMissingLine } from "@/features/report/FobMissing";
+import { WithoutChargeLine } from "@/features/report/WithoutCharge";
 import { skuHref } from "@/features/skus/href";
 import type { LandedCostReport } from "@/lib/api/client";
 import { qty, unitCost } from "@/lib/format";
@@ -49,7 +50,7 @@ export default async function UnitCostHighlight({ report }: { report: LandedCost
                   <div className={`text-2xl font-bold tabular-nums ${noCharge ? "text-slate-400" : "text-emerald-800"}`}>
                     {noCharge || ln.unit_landed_cost === null ? "—" : unitCost(ln.unit_landed_cost, report.base_currency, locale)}
                   </div>
-                  {unvalued ? <FobMissingLine href={`/purchase-orders/${ln.po_id}#taux`} /> : noCharge ? <div className="text-[11px] text-slate-500">{t("noCharge")}</div> : Number(ln.estimated) > 0 ? <div className="text-[11px] font-medium text-violet-800">{t("partlyEstimated")}</div> : null}
+                  {unvalued ? <FobMissingLine href={`/purchase-orders/${ln.po_id}#taux`} /> : noCharge && ln.charges_held ? <WithoutChargeLine box={ln} /> : noCharge ? <div className="text-[11px] text-slate-500">{t("noCharge")}</div> : Number(ln.estimated) > 0 ? <div className="text-[11px] font-medium text-violet-800">{t("partlyEstimated")}</div> : null}
                 </div>
               </div>
             </li>

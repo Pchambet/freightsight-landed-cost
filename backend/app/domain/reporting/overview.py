@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.core.money import q2
 from app.domain.costing.engine import EXCLUDED_FROM_LANDED
-from app.domain.costing.service import Computation, charged_containers
+from app.domain.costing.service import Computation, charged_containers, held_containers
 from app.domain.models import (
     Container,
     CostStatus,
@@ -33,6 +33,7 @@ from app.domain.reporting.service import (
     Bucket,
     DndAtRiskLine,
     SkuLine,
+    UnratedOrder,
     arrival_date,
     dnd_report,
     landed_cost_report,
@@ -57,6 +58,14 @@ class Figures:
     #: The part of `landed` still resting on estimates: the audit's completeness for the same dates.
     estimated: Decimal
     containers_without_charge: int
+    containers_held: int
+    held_orders: list[str]
+    #: The known value of the goods of those containers, what a figure over the charged containers
+    #: leaves out, and how many of their lines have no value.
+    uncharged_fob: Decimal
+    uncharged_fob_missing_lines: int
+    #: The orders of the period with no exchange rate, where the rate is entered.
+    orders_without_fx_rate: list[UnratedOrder]
     variance_estimated: Decimal
     variance_actual: Decimal
     variance: Decimal
@@ -72,6 +81,11 @@ class Todo:
     invoices_to_review: int
     invoices_failed: int
     containers_without_cost: int
+    #: Of those, the ones whose charges are entered but held (`held_containers`), by number, and the
+    #: orders with no rate holding them: what to open, and where the rate goes.
+    containers_held: int
+    held_containers: list[str]
+    held_orders: list[UnratedOrder]
     containers_without_loads: int
     estimates_awaiting_invoice: int
     containers_overdue: int
@@ -145,7 +159,8 @@ def overview(
 def _figures(
     db: Session, comp: Computation, org: Organization, start: date, end: date, rate: Decimal | None
 ) -> Figures:
-    totals = landed_cost_report(comp, org, group_by="month", period_from=start, period_to=end).totals
+    report = landed_cost_report(comp, org, group_by="month", period_from=start, period_to=end)
+    totals = report.totals
     landed_boxes = {
         comp.load_rows[load.id].container_id
         for load in comp.loads
@@ -171,6 +186,11 @@ def _figures(
         coefficient=totals.coefficient,
         estimated=totals.estimated,
         containers_without_charge=totals.containers_without_charge,
+        containers_held=totals.containers_held,
+        held_orders=sorted(totals.held_orders),
+        uncharged_fob=totals.uncharged_fob,
+        uncharged_fob_missing_lines=totals.uncharged_fob_missing_lines,
+        orders_without_fx_rate=report.orders_without_fx_rate,
         variance_estimated=q2(estimated),
         variance_actual=q2(actual),
         variance=q2(actual - estimated),
@@ -198,6 +218,11 @@ def _todo(
     )
     loaded = {comp.load_rows[load.id].container_id for load in comp.loads}
     costed = charged_containers(comp)
+    held = held_containers(comp)
+    boxes = sorted(c.container_number for c in active if c.id in held)
+    numbers = {order for c in active for order in held.get(c.id, ())}
+    unrated = (UnratedOrder(po.id, po.po_number) for po in comp.pos.values() if po.po_number in numbers)
+    orders = sorted(unrated, key=lambda o: o.po_number)
 
     landed = {c.id for c in active if c.discharged_at is not None or c.ata is not None}
     waiting = sum(
@@ -212,6 +237,9 @@ def _todo(
         invoices_to_review=invoices(InvoiceStatus.NEEDS_REVIEW),
         invoices_failed=invoices(InvoiceStatus.FAILED),
         containers_without_cost=sum(1 for c in active if c.id in loaded and c.id not in costed),
+        containers_held=len(boxes),
+        held_containers=boxes,
+        held_orders=orders,
         containers_without_loads=sum(1 for c in active if c.id not in loaded),
         estimates_awaiting_invoice=waiting,
         containers_overdue=len(overdue),

@@ -5,6 +5,10 @@ from pathlib import Path
 from typing import Any
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.domain.models import PurchaseOrder, PurchaseOrderLine
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -105,6 +109,9 @@ def test_no_valid_rows_is_422(client: TestClient) -> None:
     res = client.post(f"/api/v1/imports/{job['id']}/validate", json={"mapping": job["mapping"]})
     assert res.status_code == 422 and res.json()["code"] == "NO_VALID_ROWS"
     assert len(res.json()["report"]["errors"]) == 2
+    # the imports list counts the refused rows, not "0 errors" on a file where nothing passed
+    listed = next(j for j in client.get("/api/v1/imports").json() if j["id"] == job["id"])
+    assert listed["status"] == "PARSED" and listed["error_count"] == 2
 
 
 def test_over_allocation_in_file_is_a_row_error(client: TestClient) -> None:
@@ -336,7 +343,8 @@ def test_a_line_total_weight_or_volume_is_divided_by_the_line_quantity(client: T
     lines = {ln["sku"]: ln for ln in client.get(f"/api/v1/purchase-orders/{po['id']}").json()["lines"]}
     assert (lines["A"]["unit_weight_kg"], lines["A"]["unit_volume_cbm"]) == ("0.5000", "0.0120")
     assert (lines["B"]["unit_weight_kg"], lines["B"]["unit_volume_cbm"]) == ("5.0000", "0.0300")
-    assert (lines["C"]["unit_weight_kg"], lines["C"]["unit_volume_cbm"]) == ("16.6667", None)
+    # every stored digit: 50 kg over 3 pieces multiplies back to 50, which four decimals would not
+    assert (lines["C"]["unit_weight_kg"], lines["C"]["unit_volume_cbm"]) == ("16.66666666666667", None)
 
     # one dimension is said once: per unit or for the line, not both
     again = upload(client, content, "PURCHASE_ORDERS", "totals.csv")
@@ -344,6 +352,64 @@ def test_a_line_total_weight_or_volume_is_divided_by_the_line_quantity(client: T
     res = client.post(f"/api/v1/imports/{again['id']}/validate", json={"mapping": both})
     assert res.status_code == 422 and res.json()["code"] == "MAPPING_UNIT_AND_LINE_TOTAL"
     assert res.json()["dimension"] == "weight"
+
+
+def test_a_line_total_stays_the_line_total_however_light_one_piece(client: TestClient, db: Session) -> None:
+    """120 kg of labels over 2 000 000 pieces was kept as 0,0001 kg each — 200 kg for the line, two thirds
+    more of a freight split by weight — and 0,5 kg over 20 000 pieces as nothing at all."""
+    content = (
+        b"po_number;sku;quantity;unit_price;Poids total (kg);Volume total (m3)\n"
+        b"PO-L;LBL;2000000;0,01;120;0,8\nPO-L;VIS;30000;0,02;10;0,05\nPO-L;RON;20000;0,01;0,5;0,001\n"
+    )
+    job = upload(client, content, "PURCHASE_ORDERS", "labels.csv")
+    res = client.post(
+        f"/api/v1/imports/{job['id']}/commit", json={"mapping": job["mapping"], "on_error": "abort"}
+    )
+    assert res.status_code == 200, res.text
+    order = select(PurchaseOrderLine).join(PurchaseOrder).where(PurchaseOrder.po_number == "PO-L")
+    lines = {line.sku: line for line in db.scalars(order)}
+    for sku, kg, cbm in (("LBL", "120", "0.8"), ("VIS", "10", "0.05"), ("RON", "0.5", "0.001")):
+        line = lines[sku]
+        assert line.unit_weight_kg is not None and line.unit_volume_cbm is not None
+        assert (line.unit_weight_kg * line.quantity).quantize(Decimal("0.0001")) == Decimal(kg), sku
+        assert (line.unit_volume_cbm * line.quantity).quantize(Decimal("0.000001")) == Decimal(cbm), sku
+    labels = lines["LBL"]
+    assert labels.unit_weight_kg is not None and labels.unit_weight_kg * labels.quantity == Decimal("120")
+
+
+def test_a_number_the_books_cannot_hold_is_refused_on_its_row(client: TestClient) -> None:
+    """« Infinity » or 1e30 in a line total, twenty billion pieces, one piece of a thousand tonnes: the
+    preview answered a 500 for the whole file, where the row should say what is wrong."""
+    content = (
+        b"po_number;sku;quantity;unit_price;Poids total (kg)\n"
+        b"PO-N;A;10;1,00;Infinity\n"
+        b"PO-N;B;10;1,00;1e30\n"
+        b"PO-N;C;20000000000;1,00;5\n"
+        b"PO-N;D;1;1,00;1000000000\n"
+        b"PO-N;E;10;1,00;5\n"
+    )
+    report = validate(client, upload(client, content, "PURCHASE_ORDERS", "absurd.csv"))
+    assert {(e["row"], e["field"]): e["code"] for e in report["errors"]} == {
+        (2, "line_weight_kg"): "NOT_A_NUMBER",
+        (3, "line_weight_kg"): "NUMBER_TOO_LARGE",
+        (4, "quantity"): "NUMBER_TOO_LARGE",
+        (5, "line_weight_kg"): "NUMBER_TOO_LARGE",
+    }
+    assert report["valid_rows"] == 1
+
+
+def test_a_number_that_rounds_past_its_column_is_refused_on_its_row(client: TestClient) -> None:
+    """The database rounds to the column's decimals before it checks the digits: 9 999 999 999,99999
+    pieces fit under the cap and round to ten billion, which the column cannot hold — a 500 for the file.
+    A product's weight is kept to four decimals, an order line's to fourteen: the narrower one decides."""
+    orders = b"po_number;sku;quantity;unit_price\nPO-R;A;9999999999,99999;1,00\nPO-R;B;10;1,00\n"
+    report = validate(client, upload(client, orders, "PURCHASE_ORDERS", "round.csv"))
+    assert [(e["row"], e["field"], e["code"]) for e in report["errors"]] == [
+        (2, "quantity", "NUMBER_TOO_LARGE")
+    ]
+    products = b"sku;unit_weight_kg\nA;99999999,99996\nB;1,5\n"
+    report = validate(client, upload(client, products, "PRODUCTS", "products.csv"))
+    assert [(e["row"], e["code"]) for e in report["errors"]] == [(2, "NUMBER_TOO_LARGE")]
 
 
 def test_a_currency_that_changes_inside_one_order_is_refused(client: TestClient) -> None:

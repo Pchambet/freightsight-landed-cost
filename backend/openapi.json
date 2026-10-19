@@ -3821,6 +3821,77 @@
         }
       }
     },
+    "/api/v1/containers/{container_id}/erp/landed-cost/by-hand": {
+      "post": {
+        "tags": [
+          "erp"
+        ],
+        "summary": "Enter By Hand",
+        "description": "Say that the difference shown on a cost is entered by hand in the ERP, so the next change on\nit asks only for its own. Answers the preview as it now stands.",
+        "operationId": "enter_by_hand_api_v1_containers__container_id__erp_landed_cost_by_hand_post",
+        "parameters": [
+          {
+            "name": "container_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Container Id"
+            }
+          },
+          {
+            "name": "X-Org-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErpByHandEntered"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErpLandedCostPreview"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/containers/{container_id}/erp/pushes": {
       "get": {
         "tags": [
@@ -3979,7 +4050,7 @@
           "exports"
         ],
         "summary": "Landed Costs Csv",
-        "description": "One row per load, and the same numbers as the on-screen report \u2014 because they are its numbers.\n\nThe export used to add the allocations up a second way and forgot what every other surface of the\nproduct applies: import VAT is recoverable and does not belong in a landed cost. The file the\nfinance director reconciles against his trial balance was inflated by exactly the VAT he claims\nback. It now reads `organization_report`, so the CSV and the container report cannot diverge\nagain, and the VAT stands in a column of its own.\n\nThe period is read against the arrival date, like the landed-cost report on screen; a cost that\nnever reached a container has no arrival date, so the trailing `UNALLOCATED` rows are filed under\ntheir own date and say so in `period_basis`. Their amounts are what the sum of `allocated` is\nmissing: an export whose total is quietly short of the invoices is an export nobody can use.",
+        "description": "One row per load, and the same numbers as the on-screen report \u2014 because they are its numbers.\n\nThe export used to add the allocations up a second way and forgot what every other surface of the\nproduct applies: import VAT is recoverable and does not belong in a landed cost. The file the\nfinance director reconciles against his trial balance was inflated by exactly the VAT he claims\nback. It now reads `organization_report`, so the CSV and the container report cannot diverge\nagain, and the VAT stands in a column of its own.\n\nThe period is read against the arrival date, like the landed-cost report on screen; a cost that\nnever reached a container has no arrival date, so the trailing `UNALLOCATED` rows are filed under\ntheir own date and say so in `period_basis`. Their amounts are what the sum of `allocated` is\nmissing: an export whose total is quietly short of the invoices is an export nobody can use.\n\nA line whose container carries no charge at all has no landed figures \u2014 they would only repeat its\nFOB \u2014 and says so in `without_charge`, as the report's lines do; `charges_held` tells the box whose\ncharges are on file but cannot be placed, and `held_orders` the orders with no rate holding them.",
         "operationId": "landed_costs_csv_api_v1_exports_landed_costs_csv_get",
         "parameters": [
           {
@@ -4366,7 +4437,7 @@
           "exports"
         ],
         "summary": "Period Close Csv",
-        "description": "The stock valuation a closed month froze: one row per article, with the quantity, the purchase\nprice, the landed cost and the unit cost as they went into the accounts. 404 for an open month \u2014\nthe point of this file is that it never changes.",
+        "description": "The stock valuation a closed month froze: one row per article, with the quantity, the purchase\nprice, the landed cost and the unit cost as they went into the accounts. 404 for an open month \u2014\nthe point of this file is that it never changes. A container that carried no charge is in it at its\nFOB, which is what its goods are booked at; `containers_without_charge` says how many of the\narticle's containers those are.",
         "operationId": "period_close_csv_api_v1_exports_period_close_csv_get",
         "parameters": [
           {
@@ -5183,6 +5254,148 @@
             }
           }
         },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CostResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/costs/{cost_id}/credits": {
+      "post": {
+        "tags": [
+          "costs"
+        ],
+        "summary": "Add Credit",
+        "description": "A refund entered by hand: a credit note that came by post, a discount granted on the phone.\n\nIt reduces the cost it is entered on and is kept as its own line \u2014 never a cost of its own, and\nnever more than what the cost still amounts to.",
+        "operationId": "add_credit_api_v1_costs__cost_id__credits_post",
+        "parameters": [
+          {
+            "name": "cost_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Cost Id"
+            }
+          },
+          {
+            "name": "X-Org-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CostCreditCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CostResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/costs/{cost_id}/credits/{credit_id}": {
+      "delete": {
+        "tags": [
+          "costs"
+        ],
+        "summary": "Remove Credit",
+        "description": "Take a credit back: the cost amounts to what it did before it. A credit read from a credit\nnote is taken back by reopening that credit note, which says why on the document itself.",
+        "operationId": "remove_credit_api_v1_costs__cost_id__credits__credit_id__delete",
+        "parameters": [
+          {
+            "name": "cost_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Cost Id"
+            }
+          },
+          {
+            "name": "credit_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Credit Id"
+            }
+          },
+          {
+            "name": "X-Org-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org-Id"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -8352,6 +8565,11 @@
             "type": "integer",
             "title": "Containers Without Charge",
             "default": 0
+          },
+          "containers_held": {
+            "type": "integer",
+            "title": "Containers Held",
+            "default": 0
           }
         },
         "type": "object",
@@ -8415,6 +8633,11 @@
           "containers_without_cost": {
             "type": "integer",
             "title": "Containers Without Cost"
+          },
+          "containers_held": {
+            "type": "integer",
+            "title": "Containers Held",
+            "default": 0
           },
           "fx_sources": {
             "additionalProperties": {
@@ -9000,6 +9223,11 @@
           "containers_without_charge": {
             "type": "integer",
             "title": "Containers Without Charge",
+            "default": 0
+          },
+          "containers_held": {
+            "type": "integer",
+            "title": "Containers Held",
             "default": 0
           }
         },
@@ -10416,6 +10644,151 @@
         ],
         "title": "CostCreate"
       },
+      "CostCreditCreate": {
+        "properties": {
+          "amount": {
+            "anyOf": [
+              {
+                "type": "number",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,12}|(?=[\\d.]{1,15}0*$)\\d{0,12}\\.\\d{0,2}0*$)"
+              }
+            ],
+            "title": "Amount"
+          },
+          "currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currency"
+          },
+          "credit_number": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credit Number"
+          },
+          "vendor": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vendor"
+          },
+          "credit_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Credit Date"
+          }
+        },
+        "type": "object",
+        "required": [
+          "amount",
+          "credit_date"
+        ],
+        "title": "CostCreditCreate",
+        "description": "A refund entered by hand on an invoiced cost: a credit note, a discount granted afterwards."
+      },
+      "CostCreditResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "amount": {
+            "type": "string",
+            "title": "Amount"
+          },
+          "credit_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credit Number"
+          },
+          "vendor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vendor"
+          },
+          "credit_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Credit Date"
+          },
+          "invoice_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invoice Id"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "amount",
+          "credit_number",
+          "vendor",
+          "credit_date",
+          "invoice_id",
+          "created_by",
+          "created_at"
+        ],
+        "title": "CostCreditResponse"
+      },
       "CostResponse": {
         "properties": {
           "id": {
@@ -10600,6 +10973,17 @@
             "type": "string",
             "format": "date-time",
             "title": "Created At"
+          },
+          "credited": {
+            "type": "string",
+            "title": "Credited"
+          },
+          "credits": {
+            "items": {
+              "$ref": "#/components/schemas/CostCreditResponse"
+            },
+            "type": "array",
+            "title": "Credits"
           }
         },
         "type": "object",
@@ -10627,7 +11011,8 @@
           "supersedes_cost_id",
           "closed_at",
           "close_reason",
-          "created_at"
+          "created_at",
+          "credited"
         ],
         "title": "CostResponse"
       },
@@ -10837,6 +11222,61 @@
         },
         "type": "object",
         "title": "CostUpdate"
+      },
+      "CreditCandidate": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "amount": {
+            "type": "string",
+            "title": "Amount"
+          },
+          "currency": {
+            "type": "string",
+            "title": "Currency"
+          },
+          "vendor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vendor"
+          },
+          "invoice_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invoice Number"
+          },
+          "cost_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Cost Date"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "amount",
+          "currency",
+          "vendor",
+          "invoice_number",
+          "cost_date"
+        ],
+        "title": "CreditCandidate",
+        "description": "An invoiced cost a refund line can reduce, as the review screen names it."
       },
       "DndAnalysis": {
         "properties": {
@@ -11119,6 +11559,58 @@
           "message"
         ],
         "title": "ErpBlocker"
+      },
+      "ErpByHand": {
+        "properties": {
+          "existing": {
+            "type": "string",
+            "title": "Existing"
+          },
+          "held": {
+            "type": "string",
+            "title": "Held"
+          },
+          "difference": {
+            "type": "string",
+            "title": "Difference"
+          }
+        },
+        "type": "object",
+        "required": [
+          "existing",
+          "held",
+          "difference"
+        ],
+        "title": "ErpByHand",
+        "description": "A difference from a validated document that is not written for want of its split per receipt\nline: a person enters it in the ERP."
+      },
+      "ErpByHandEntered": {
+        "properties": {
+          "cost_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Cost Id"
+          },
+          "difference": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,12}|(?=[\\d.]{1,15}0*$)\\d{0,12}\\.\\d{0,2}0*$)"
+              }
+            ],
+            "title": "Difference"
+          }
+        },
+        "type": "object",
+        "required": [
+          "cost_id",
+          "difference"
+        ],
+        "title": "ErpByHandEntered",
+        "description": "A person says the difference shown on a cost is entered by hand in the ERP: the one shown, signed."
       },
       "ErpConnectionCreate": {
         "properties": {
@@ -11406,6 +11898,16 @@
               }
             ],
             "title": "Pushed Push Id"
+          },
+          "by_hand": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ErpByHand"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -11650,7 +12152,7 @@
           },
           "skipped": {
             "additionalProperties": {
-              "type": "string"
+              "$ref": "#/components/schemas/EstimateSkip"
             },
             "type": "object",
             "title": "Skipped"
@@ -11663,6 +12165,40 @@
         ],
         "title": "EstimateResponse",
         "description": "What applying the rate cards to a container produced, and what it did not."
+      },
+      "EstimateSkip": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CostScope"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "basis": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RateBasis"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "code"
+        ],
+        "title": "EstimateSkip",
+        "description": "Why a cost type got no estimate. `code`: SCOPE_NOT_APPLIED (with `scope`), NEEDS_SHIPMENT,\nALREADY_RECORDED, ON_SHIPMENT, ON_SHIPMENT_CONTAINER, NO_BASIS (with `basis`), NO_TARIFF_RATE."
       },
       "EtaHistoryResponse": {
         "properties": {
@@ -12329,6 +12865,20 @@
             ],
             "title": "Loads Updated"
           },
+          "orders_without_rate": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Orders Without Rate"
+          },
           "containers_created": {
             "anyOf": [
               {
@@ -12775,6 +13325,19 @@
             "type": "array",
             "title": "Superseded Estimate Ids"
           },
+          "credits_created": {
+            "type": "integer",
+            "title": "Credits Created",
+            "default": 0
+          },
+          "credited_cost_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "title": "Credited Cost Ids"
+          },
           "notes": {
             "items": {
               "type": "string"
@@ -12821,8 +13384,7 @@
           "amount": {
             "anyOf": [
               {
-                "type": "number",
-                "exclusiveMinimum": 0.0
+                "type": "number"
               },
               {
                 "type": "string",
@@ -12887,8 +13449,7 @@
           "amount": {
             "anyOf": [
               {
-                "type": "number",
-                "exclusiveMinimum": 0.0
+                "type": "number"
               },
               {
                 "type": "string",
@@ -12964,6 +13525,18 @@
               }
             ],
             "title": "Description"
+          },
+          "credit_cost_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credit Cost Id"
           },
           "id": {
             "type": "string",
@@ -13074,6 +13647,30 @@
               }
             ],
             "title": "Cost Id"
+          },
+          "refund": {
+            "type": "boolean",
+            "title": "Refund",
+            "default": false
+          },
+          "credit_cost_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credit Cost Id"
+          },
+          "credit_candidates": {
+            "items": {
+              "$ref": "#/components/schemas/CreditCandidate"
+            },
+            "type": "array",
+            "title": "Credit Candidates"
           }
         },
         "type": "object",
@@ -13098,8 +13695,7 @@
           "amount": {
             "anyOf": [
               {
-                "type": "number",
-                "exclusiveMinimum": 0.0
+                "type": "number"
               },
               {
                 "type": "string",
@@ -13175,6 +13771,18 @@
               }
             ],
             "title": "Description"
+          },
+          "credit_cost_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credit Cost Id"
           }
         },
         "type": "object",
@@ -13356,6 +13964,11 @@
             "type": "string",
             "format": "date-time",
             "title": "Created At"
+          },
+          "credit_note": {
+            "type": "boolean",
+            "title": "Credit Note",
+            "default": false
           },
           "lines": {
             "items": {
@@ -13685,6 +14298,13 @@
           },
           "totals": {
             "$ref": "#/components/schemas/ReportBucket"
+          },
+          "orders_without_fx_rate": {
+            "items": {
+              "$ref": "#/components/schemas/PeriodOrder"
+            },
+            "type": "array",
+            "title": "Orders Without Fx Rate"
           }
         },
         "type": "object",
@@ -13718,6 +14338,34 @@
             },
             "type": "object",
             "title": "Totals"
+          },
+          "coefficient": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coefficient"
+          },
+          "containers_without_charge": {
+            "type": "integer",
+            "title": "Containers Without Charge",
+            "default": 0
+          },
+          "containers_held": {
+            "type": "integer",
+            "title": "Containers Held",
+            "default": 0
+          },
+          "held_orders": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Held Orders"
           },
           "fob_missing": {
             "anyOf": [
@@ -14254,6 +14902,35 @@
             "type": "integer",
             "title": "Containers Without Charge"
           },
+          "containers_held": {
+            "type": "integer",
+            "title": "Containers Held",
+            "default": 0
+          },
+          "held_orders": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Held Orders"
+          },
+          "uncharged_fob": {
+            "type": "string",
+            "title": "Uncharged Fob",
+            "default": "0.00"
+          },
+          "uncharged_fob_missing_lines": {
+            "type": "integer",
+            "title": "Uncharged Fob Missing Lines",
+            "default": 0
+          },
+          "orders_without_fx_rate": {
+            "items": {
+              "$ref": "#/components/schemas/PeriodOrder"
+            },
+            "type": "array",
+            "title": "Orders Without Fx Rate"
+          },
           "variance_estimated": {
             "type": "string",
             "title": "Variance Estimated"
@@ -14388,6 +15065,25 @@
           "containers_without_cost": {
             "type": "integer",
             "title": "Containers Without Cost"
+          },
+          "containers_held": {
+            "type": "integer",
+            "title": "Containers Held",
+            "default": 0
+          },
+          "held_containers": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Held Containers"
+          },
+          "held_orders": {
+            "items": {
+              "$ref": "#/components/schemas/PeriodOrder"
+            },
+            "type": "array",
+            "title": "Held Orders"
           },
           "containers_without_loads": {
             "type": "integer",
@@ -14767,6 +15463,18 @@
             "type": "integer",
             "title": "Containers Without Cost"
           },
+          "containers_held": {
+            "type": "integer",
+            "title": "Containers Held",
+            "default": 0
+          },
+          "held_orders": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Held Orders"
+          },
           "orders_without_fx_rate": {
             "items": {
               "$ref": "#/components/schemas/PeriodOrder"
@@ -14843,6 +15551,34 @@
             },
             "type": "object",
             "title": "By Cost Type"
+          },
+          "charged_fob": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Charged Fob"
+          },
+          "containers_without_charge": {
+            "type": "integer",
+            "title": "Containers Without Charge",
+            "default": 0
+          },
+          "containers_held": {
+            "type": "integer",
+            "title": "Containers Held",
+            "default": 0
+          },
+          "held_orders": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Held Orders"
           },
           "closed_at": {
             "anyOf": [
@@ -14961,6 +15697,28 @@
             "type": "integer",
             "title": "Fob Missing Lines",
             "default": 0
+          },
+          "frozen_stock": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Frozen Stock"
+          },
+          "live_stock": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Live Stock"
           }
         },
         "type": "object",
@@ -15249,6 +16007,7 @@
               "SAME_INVOICE_TWICE",
               "CREDIT_NOTE_REVERSES_COST",
               "CREDIT_NOTES_SKIPPED",
+              "ORDERS_RATE_UNCONFIRMED",
               "PO_SPLIT",
               "LINES_WITHOUT_DUTY_RATE",
               "DUTY_GAP",
@@ -15934,6 +16693,22 @@
             ],
             "title": "Fx Date"
           },
+          "fx_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fx Source"
+          },
+          "rate_unconfirmed": {
+            "type": "boolean",
+            "title": "Rate Unconfirmed",
+            "default": false
+          },
           "incoterm": {
             "anyOf": [
               {
@@ -16461,6 +17236,38 @@
           "containers_without_charge": {
             "type": "integer",
             "title": "Containers Without Charge"
+          },
+          "containers_held": {
+            "type": "integer",
+            "title": "Containers Held",
+            "default": 0
+          },
+          "held_orders": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Held Orders"
+          },
+          "charged_lines": {
+            "type": "integer",
+            "title": "Charged Lines",
+            "default": 0
+          },
+          "charged_quantity": {
+            "type": "string",
+            "title": "Charged Quantity",
+            "default": "0.0000"
+          },
+          "uncharged_fob": {
+            "type": "string",
+            "title": "Uncharged Fob",
+            "default": "0.00"
+          },
+          "uncharged_fob_missing_lines": {
+            "type": "integer",
+            "title": "Uncharged Fob Missing Lines",
+            "default": 0
           }
         },
         "type": "object",
@@ -16610,6 +17417,18 @@
             "type": "boolean",
             "title": "Without Charge",
             "default": false
+          },
+          "charges_held": {
+            "type": "boolean",
+            "title": "Charges Held",
+            "default": false
+          },
+          "held_orders": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Held Orders"
           }
         },
         "type": "object",
@@ -16758,6 +17577,45 @@
           "containers_without_charge": {
             "type": "integer",
             "title": "Containers Without Charge"
+          },
+          "containers_held": {
+            "type": "integer",
+            "title": "Containers Held",
+            "default": 0
+          },
+          "held_orders": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Held Orders"
+          },
+          "charged_quantity": {
+            "type": "string",
+            "title": "Charged Quantity",
+            "default": "0.0000"
+          },
+          "unit_charged_fob": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit Charged Fob"
+          },
+          "charged_fob": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Charged Fob"
           }
         },
         "type": "object",
@@ -17696,6 +18554,18 @@
           "without_charge": {
             "type": "boolean",
             "title": "Without Charge"
+          },
+          "charges_held": {
+            "type": "boolean",
+            "title": "Charges Held",
+            "default": false
+          },
+          "held_orders": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Held Orders"
           }
         },
         "type": "object",
@@ -17832,6 +18702,18 @@
           "without_charge": {
             "type": "boolean",
             "title": "Without Charge"
+          },
+          "charges_held": {
+            "type": "boolean",
+            "title": "Charges Held",
+            "default": false
+          },
+          "held_orders": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Held Orders"
           }
         },
         "type": "object",
@@ -18190,6 +19072,39 @@
           "containers_without_charge": {
             "type": "integer",
             "title": "Containers Without Charge"
+          },
+          "containers_held": {
+            "type": "integer",
+            "title": "Containers Held",
+            "default": 0
+          },
+          "held_orders": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Held Orders"
+          },
+          "charged_quantity": {
+            "type": "string",
+            "title": "Charged Quantity",
+            "default": "0.0000"
+          },
+          "unit_charged_fob": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit Charged Fob"
+          },
+          "received_quantity": {
+            "type": "string",
+            "title": "Received Quantity",
+            "default": "0.0000"
           }
         },
         "type": "object",

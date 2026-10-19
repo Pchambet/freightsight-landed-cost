@@ -86,6 +86,71 @@ def test_cards_can_be_edited_and_removed(client: TestClient, org: Organization) 
     assert client.get("/api/v1/organization/rate-cards").json() == []
 
 
+def test_a_card_added_changed_and_removed_is_in_the_history(client: TestClient, org: Organization) -> None:
+    # A card prices every estimate made from it: who set which price, and when, is part of the books.
+    card = add_card(client, cost_type="DRAYAGE", basis="PER_100KG", amount="1.5000", hs_code=None)
+    client.patch(f"/api/v1/organization/rate-cards/{card['id']}", json={"amount": "1.7500"})
+    client.delete(f"/api/v1/organization/rate-cards/{card['id']}")
+
+    entries = client.get("/api/v1/audit-log", params={"entity_id": card["id"]}).json()["entries"]
+    assert [(e["action"], e["entity_type"]) for e in entries] == [
+        ("rate_card.deleted", "rate_card"),
+        ("rate_card.updated", "rate_card"),
+        ("rate_card.created", "rate_card"),
+    ]
+    deleted, updated, created = entries
+    assert created["before"] is None
+    assert {**created["after"], "price": Decimal(created["after"]["price"])} == {
+        "cost_type": "DRAYAGE",
+        "scope": "CONTAINER",
+        "basis": "PER_100KG",
+        "price": Decimal("1.5"),
+        "currency": "EUR",
+        "hs_code": None,
+        "notes": None,
+    }
+    assert Decimal(updated["before"]["price"]) == Decimal("1.5")
+    assert Decimal(updated["after"]["price"]) == Decimal("1.75")
+    assert deleted["after"] is None and deleted["before"]["cost_type"] == "DRAYAGE"
+
+
+def test_a_card_sent_back_with_the_same_price_written_otherwise_is_not_a_change(
+    client: TestClient, org: Organization
+) -> None:
+    # « 1.5 » is the price stored as « 1.5000 »: the history must not say the price moved.
+    card = add_card(client, cost_type="DRAYAGE", basis="PER_100KG", amount="1.5000")
+    res = client.patch(f"/api/v1/organization/rate-cards/{card['id']}", json={"amount": "1.5"})
+    assert res.status_code == 200, res.text
+    entries = client.get("/api/v1/audit-log", params={"entity_id": card["id"]}).json()["entries"]
+    assert [e["action"] for e in entries] == ["rate_card.created"]
+
+
+def test_the_estimates_a_person_makes_from_the_cards_are_in_the_history(
+    client: TestClient, org: Organization
+) -> None:
+    container_id = seed_container(client, hs_code="40111000")
+    add_card(client, cost_type="THC", amount="275.00")
+    add_card(client, cost_type="CUSTOMS_DUTY", amount="0.0250", hs_code="4011")
+
+    created = {c["cost_type"]: c for c in estimates(client, container_id)["created"]}
+    entries = client.get("/api/v1/audit-log", params={"action": "cost.estimated"}).json()["entries"]
+    by_cost = {e["entity_id"]: e for e in entries}
+    assert set(by_cost) == {c["id"] for c in created.values()}
+    thc, duty = by_cost[created["THC"]["id"]], by_cost[created["CUSTOMS_DUTY"]["id"]]
+    assert thc["entity_type"] == "cost"
+    assert (thc["after"]["cost_type"], thc["after"]["amount"], thc["after"]["basis"]) == (
+        "THC",
+        "275.00",
+        "FLAT",
+    )
+    assert thc["after"]["container_id"] == container_id
+    # Duty comes from the tariff rates on the lines, not from a card's basis.
+    assert (duty["after"]["amount"], "basis" in duty["after"]) == ("250.00", False)
+    # A second run creates nothing, so it records nothing.
+    estimates(client, container_id)
+    assert len(client.get("/api/v1/audit-log", params={"action": "cost.estimated"}).json()["entries"]) == 2
+
+
 # ---------------------------------------------------------------------------- applying them
 
 
@@ -111,8 +176,7 @@ def test_a_basis_nobody_entered_produces_nothing(client: TestClient, org: Organi
 
     result = estimates(client, container_id)
     assert result["created"] == []
-    assert "DRAYAGE" in result["skipped"]
-    assert "PER_100KG" in result["skipped"]["DRAYAGE"]
+    assert result["skipped"]["DRAYAGE"] == {"code": "NO_BASIS", "basis": "PER_100KG", "scope": None}
 
 
 def test_running_it_twice_changes_nothing(client: TestClient, org: Organization) -> None:
@@ -123,7 +187,7 @@ def test_running_it_twice_changes_nothing(client: TestClient, org: Organization)
     assert len(first["created"]) == 1
     second = estimates(client, container_id)
     assert second["created"] == []
-    assert second["skipped"]["THC"] == "a cost of this type already exists"
+    assert second["skipped"]["THC"]["code"] == "ALREADY_RECORDED"
     assert len(client.get("/api/v1/costs").json()) == 1
 
 
@@ -145,7 +209,7 @@ def test_an_invoice_already_there_stops_the_estimate(client: TestClient, org: Or
 
     result = estimates(client, container_id)
     assert result["created"] == []
-    assert result["skipped"]["THC"] == "a cost of this type already exists"
+    assert result["skipped"]["THC"]["code"] == "ALREADY_RECORDED"
 
 
 def test_the_estimates_reach_the_landed_cost(client: TestClient, org: Organization) -> None:
@@ -234,7 +298,7 @@ def test_a_bill_of_lading_card_waits_for_the_box_to_travel_under_one(
     add_card(client, cost_type="DRAYAGE", scope="SHIPMENT", amount="450.00")
     result = estimates(client, container_id)
     assert result["created"] == []
-    assert result["skipped"]["DRAYAGE"] == "a SHIPMENT rate card needs the container to be on a shipment"
+    assert result["skipped"]["DRAYAGE"]["code"] == "NEEDS_SHIPMENT"
 
 
 def test_a_card_priced_per_box_does_not_add_the_freight_its_bill_of_lading_carries(
@@ -251,7 +315,7 @@ def test_a_card_priced_per_box_does_not_add_the_freight_its_bill_of_lading_carri
     add_card(client, cost_type="OCEAN_FREIGHT", amount="3700.00")
     result = estimates(client, container_id)
     assert result["created"] == []
-    assert result["skipped"]["OCEAN_FREIGHT"] == "a cost of this type is already on the container's shipment"
+    assert result["skipped"]["OCEAN_FREIGHT"]["code"] == "ON_SHIPMENT"
 
 
 def test_the_duty_estimate_takes_each_line_s_customs_value_as_the_engine_spreads_the_freight(
@@ -280,7 +344,7 @@ def test_no_rate_anywhere_says_so_instead_of_inventing_one(client: TestClient, o
     container_id = seed_container(client)
     result = estimates(client, container_id)
     assert result["created"] == []
-    assert result["skipped"]["CUSTOMS_DUTY"] == "no tariff rate on these lines"
+    assert result["skipped"]["CUSTOMS_DUTY"]["code"] == "NO_TARIFF_RATE"
 
 
 # ---------------------------------------------------------------------------- isolation

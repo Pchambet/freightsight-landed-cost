@@ -6,11 +6,14 @@ import { site } from "@/lib/site";
 
 // Article 6-III of the LCEN. Rendered only once every field it requires is in site.publisher and
 // site.hosts: until then the page is a 404 and nothing links to it (see lib/site.ts).
-export const metadata: Metadata = {
-  title: "Mentions légales",
-  description: "Éditeur, directeur de la publication et hébergeurs du site FreightSight.",
-  alternates: { canonical: `${site.url}/mentions-legales` },
-};
+// While it is a 404, its browser tab says so like any other missing page.
+export const metadata: Metadata = site.legalNoticePublished
+  ? {
+      title: "Mentions légales",
+      description: "Éditeur, directeur de la publication et hébergeurs du site FreightSight.",
+      alternates: { canonical: `${site.url}/mentions-legales` },
+    }
+  : { title: "Page introuvable" };
 
 export default function LegalNoticePage() {
   if (!site.legalNoticePublished) notFound();

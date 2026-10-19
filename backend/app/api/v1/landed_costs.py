@@ -23,6 +23,7 @@ def _serialize(r: rpt.Report) -> schemas.LandedCostReport:
             "allocated": r.allocated,
             "vat": r.vat,
             "landed": r.landed,
+            "charged_fob": r.charged_fob,
             "unallocated": r.unallocated,
             "estimated": r.estimated,
             "actual": r.actual,
@@ -30,6 +31,8 @@ def _serialize(r: rpt.Report) -> schemas.LandedCostReport:
             "matched_estimated": r.matched_estimated,
             "matched_actual": r.matched_actual,
             "unforecast_actual": r.unforecast_actual,
+            "unallocated_actual": r.unallocated_actual,
+            "invoiced": r.actual + r.unallocated_actual,
         },
         matched_pairs=r.matched_pairs,
         completeness=r.completeness,
@@ -44,6 +47,10 @@ def _serialize(r: rpt.Report) -> schemas.LandedCostReport:
         notes=[schemas.ReportNote(**n.__dict__) for n in r.notes],
         fob_missing=r.fob_missing,
         fob_missing_lines=r.fob_missing_lines,
+        coefficient=r.coefficient,
+        containers_without_charge=r.containers_without_charge,
+        containers_held=r.containers_held,
+        held_orders=r.held_orders,
     )
 
 

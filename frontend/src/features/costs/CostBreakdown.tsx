@@ -12,11 +12,14 @@ import { money } from "@/lib/format";
  */
 export default async function CostBreakdown({ report }: { report: LandedCostReport }) {
   const [t, tf, locale] = await Promise.all([getTranslations("costBreakdown"), getTranslations("costFamily"), getLocale()]);
-  const fob = Number(report.totals.fob);
+  // The goods the charges were spread on (`charged_fob`): a container of the order with no charge is in
+  // the FOB and in no landed figure, and dividing by the whole FOB read the coefficient low. The
+  // coefficient is the API's, over the same goods.
+  const basis = report.totals.charged_fob ?? report.totals.fob;
+  const fob = Number(basis);
   const families = foldFamilies(report.by_cost_type);
-  if (!(fob > 0) || familyTotal(families) <= 0) return null;
-  const landed = Number(report.totals.landed);
-  const coef = new Intl.NumberFormat(locale === "fr" ? "fr-FR" : "en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(landed / fob);
+  if (basis === null || !(fob > 0) || familyTotal(families) <= 0) return null;
+  const coef = report.coefficient == null ? "—" : new Intl.NumberFormat(locale === "fr" ? "fr-FR" : "en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(report.coefficient));
   const familyLabels = Object.fromEntries(COST_FAMILIES.map((f) => [f, tf(f)])) as Record<CostFamily, string>;
   // An estimate is not a cost paid: the ratio still says so while estimates stand in for invoices.
   const estimated = report.totals.estimated ?? "0.00";

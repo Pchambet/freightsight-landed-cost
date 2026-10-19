@@ -14,6 +14,10 @@ The **public** pages only, without a Clerk session and without the API running:
 - `robots.txt` keeps the application out of search engines;
 - a shared report link (`/r/<token>`) that does not exist is a real 404, `noindex`, with no sign-in redirect;
 - the public pages (`/`, `/securite`, `/design-partner`, `/r/…`), their Open Graph images, `robots.txt` and `sitemap.xml` are served without the Clerk middleware, so a crawler that keeps no cookies is never sent to Clerk's handshake.
+- every page sends a nonce-based Content-Security-Policy with a new nonce per request, Next's and Clerk's
+  script tags carry it, and loading the public pages, `/sign-in`, `/sign-up`, a 404 and `/r/…` reports no
+  violation (`content-security-policy.spec.ts`). Offline, Clerk's own script and Cloudflare Turnstile never
+  load, so what they do under the policy is checked by hand against a real Clerk development instance.
 
 Every request that is not the local server is aborted in the tests, so a run is hermetic: no Clerk
 network call, no FX call, nothing that can make CI flaky. The Clerk keys in `playwright.config.ts` are

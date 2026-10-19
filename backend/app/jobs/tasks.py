@@ -164,6 +164,20 @@ def dispatch_alerts(timestamp: int) -> None:
     logger.info("sent %s alert digests", sent)
 
 
+@app.periodic(cron="20 */6 * * *")
+@app.task(
+    name="fx.resolve_missing_rates",
+    queueing_lock="fx:resolve_missing_rates",
+    retry=RetryStrategy(max_attempts=2, exponential_wait=300),
+)
+def resolve_missing_rates(timestamp: int) -> None:
+    """Orders left without an exchange rate — the provider down when they were written — get it once
+    the provider has it. Nothing else asks again: the ERP sync reads only the orders that changed."""
+    with handlers.session() as db:
+        resolved = handlers.resolve_missing_rates(db)
+    logger.info("gave %s order(s) their missing exchange rate", resolved)
+
+
 @app.task(
     name="invoices.extract",
     retry=RetryStrategy(max_attempts=3, exponential_wait=30),

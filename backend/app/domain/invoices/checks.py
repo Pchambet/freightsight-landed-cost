@@ -29,7 +29,7 @@ from sqlalchemy.orm import Session
 from app.domain.costing.entry import normalize_invoice_number, normalize_vendor, same_invoice
 from app.domain.fx.service import FxService
 from app.domain.invoices.ports import ExtractedLine, ExtractionContext, FreightInvoice
-from app.domain.models import Container, Cost, CostScope, CostStatus, CostType, PurchaseOrderLine
+from app.domain.models import Container, Cost, CostCredit, CostScope, CostStatus, CostType, PurchaseOrderLine
 
 #: How far the sum of the lines may be from the stated total before we stop believing the reading.
 TOLERANCE = Decimal("0.02")
@@ -232,6 +232,14 @@ def invoice_line_recorded(
     if not number or where is None:
         return []
     target = func.coalesce(Cost.container_id, Cost.shipment_id, Cost.po_id, Cost.po_line_id)
+    # The amount invoiced, not what a refund has since brought the cost down to: the line typed again
+    # is the line as printed on the invoice.
+    credited = (
+        select(func.coalesce(func.sum(CostCredit.amount), 0))
+        .where(CostCredit.cost_id == Cost.id)
+        .correlate(Cost)
+        .scalar_subquery()
+    )
     candidates = db.scalars(
         select(Cost).where(
             Cost.org_id == org_id,
@@ -242,7 +250,7 @@ def invoice_line_recorded(
             Cost.invoice_number.is_not(None),
             func.regexp_replace(func.upper(Cost.invoice_number), "[^A-Z0-9]", "", "g") == number,
             where,
-            or_(target == target_id, Cost.amount == amount),
+            or_(target == target_id, Cost.amount + credited == amount),
             *([Cost.id != exclude] if exclude is not None else []),
         )
     )

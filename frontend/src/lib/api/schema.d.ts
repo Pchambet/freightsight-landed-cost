@@ -879,6 +879,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/containers/{container_id}/erp/landed-cost/by-hand": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Enter By Hand
+         * @description Say that the difference shown on a cost is entered by hand in the ERP, so the next change on
+         *     it asks only for its own. Answers the preview as it now stands.
+         */
+        post: operations["enter_by_hand_api_v1_containers__container_id__erp_landed_cost_by_hand_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/containers/{container_id}/erp/pushes": {
         parameters: {
             query?: never;
@@ -946,6 +967,10 @@ export interface paths {
          *     never reached a container has no arrival date, so the trailing `UNALLOCATED` rows are filed under
          *     their own date and say so in `period_basis`. Their amounts are what the sum of `allocated` is
          *     missing: an export whose total is quietly short of the invoices is an export nobody can use.
+         *
+         *     A line whose container carries no charge at all has no landed figures — they would only repeat its
+         *     FOB — and says so in `without_charge`, as the report's lines do; `charges_held` tells the box whose
+         *     charges are on file but cannot be placed, and `held_orders` the orders with no rate holding them.
          */
         get: operations["landed_costs_csv_api_v1_exports_landed_costs_csv_get"];
         put?: never;
@@ -1032,7 +1057,9 @@ export interface paths {
          * Period Close Csv
          * @description The stock valuation a closed month froze: one row per article, with the quantity, the purchase
          *     price, the landed cost and the unit cost as they went into the accounts. 404 for an open month —
-         *     the point of this file is that it never changes.
+         *     the point of this file is that it never changes. A container that carried no charge is in it at its
+         *     FOB, which is what its goods are booked at; `containers_without_charge` says how many of the
+         *     article's containers those are.
          */
         get: operations["period_close_csv_api_v1_exports_period_close_csv_get"];
         put?: never;
@@ -1188,6 +1215,50 @@ export interface paths {
          */
         post: operations["close_cost_api_v1_costs__cost_id__close_post"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/costs/{cost_id}/credits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add Credit
+         * @description A refund entered by hand: a credit note that came by post, a discount granted on the phone.
+         *
+         *     It reduces the cost it is entered on and is kept as its own line — never a cost of its own, and
+         *     never more than what the cost still amounts to.
+         */
+        post: operations["add_credit_api_v1_costs__cost_id__credits_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/costs/{cost_id}/credits/{credit_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove Credit
+         * @description Take a credit back: the cost amounts to what it did before it. A credit read from a credit
+         *     note is taken back by reopening that credit note, which says why on the document itself.
+         */
+        delete: operations["remove_credit_api_v1_costs__cost_id__credits__credit_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2090,6 +2161,11 @@ export interface components {
              * @default 0
              */
             containers_without_charge: number;
+            /**
+             * Containers Held
+             * @default 0
+             */
+            containers_held: number;
         };
         /** AuditCompleteness */
         AuditCompleteness: {
@@ -2107,6 +2183,11 @@ export interface components {
             invoices_to_review: number;
             /** Containers Without Cost */
             containers_without_cost: number;
+            /**
+             * Containers Held
+             * @default 0
+             */
+            containers_held: number;
             /** Fx Sources */
             fx_sources: {
                 [key: string]: number;
@@ -2281,6 +2362,11 @@ export interface components {
              * @default 0
              */
             containers_without_charge: number;
+            /**
+             * Containers Held
+             * @default 0
+             */
+            containers_held: number;
         };
         /**
          * AuditPage
@@ -2676,6 +2762,53 @@ export interface components {
             /** Notes */
             notes?: string | null;
         };
+        /**
+         * CostCreditCreate
+         * @description A refund entered by hand on an invoiced cost: a credit note, a discount granted afterwards.
+         */
+        CostCreditCreate: {
+            /** Amount */
+            amount: number | string;
+            /** Currency */
+            currency?: string | null;
+            /** Credit Number */
+            credit_number?: string | null;
+            /** Vendor */
+            vendor?: string | null;
+            /**
+             * Credit Date
+             * Format: date
+             */
+            credit_date: string;
+        };
+        /** CostCreditResponse */
+        CostCreditResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Amount */
+            amount: string;
+            /** Credit Number */
+            credit_number: string | null;
+            /** Vendor */
+            vendor: string | null;
+            /**
+             * Credit Date
+             * Format: date
+             */
+            credit_date: string;
+            /** Invoice Id */
+            invoice_id: string | null;
+            /** Created By */
+            created_by: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
         /** CostResponse */
         CostResponse: {
             /**
@@ -2736,6 +2869,10 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /** Credited */
+            credited: string;
+            /** Credits */
+            credits?: components["schemas"]["CostCreditResponse"][];
         };
         /**
          * CostScope
@@ -2792,6 +2929,30 @@ export interface components {
             status?: components["schemas"]["CostStatus"] | null;
             /** Supersedes Cost Id */
             supersedes_cost_id?: string | null;
+        };
+        /**
+         * CreditCandidate
+         * @description An invoiced cost a refund line can reduce, as the review screen names it.
+         */
+        CreditCandidate: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Amount */
+            amount: string;
+            /** Currency */
+            currency: string;
+            /** Vendor */
+            vendor: string | null;
+            /** Invoice Number */
+            invoice_number: string | null;
+            /**
+             * Cost Date
+             * Format: date
+             */
+            cost_date: string;
         };
         /** DndAnalysis */
         DndAnalysis: {
@@ -2887,6 +3048,32 @@ export interface components {
              * @default true
              */
             blocking: boolean;
+        };
+        /**
+         * ErpByHand
+         * @description A difference from a validated document that is not written for want of its split per receipt
+         *     line: a person enters it in the ERP.
+         */
+        ErpByHand: {
+            /** Existing */
+            existing: string;
+            /** Held */
+            held: string;
+            /** Difference */
+            difference: string;
+        };
+        /**
+         * ErpByHandEntered
+         * @description A person says the difference shown on a cost is entered by hand in the ERP: the one shown, signed.
+         */
+        ErpByHandEntered: {
+            /**
+             * Cost Id
+             * Format: uuid
+             */
+            cost_id: string;
+            /** Difference */
+            difference: number | string;
         };
         /**
          * ErpConnectionCreate
@@ -2989,6 +3176,7 @@ export interface components {
             pushed_as?: string | null;
             /** Pushed Push Id */
             pushed_push_id?: string | null;
+            by_hand?: components["schemas"]["ErpByHand"] | null;
         };
         /** ErpPlannedLine */
         ErpPlannedLine: {
@@ -3079,8 +3267,19 @@ export interface components {
             created: components["schemas"]["CostResponse"][];
             /** Skipped */
             skipped: {
-                [key: string]: string;
+                [key: string]: components["schemas"]["EstimateSkip"];
             };
+        };
+        /**
+         * EstimateSkip
+         * @description Why a cost type got no estimate. `code`: SCOPE_NOT_APPLIED (with `scope`), NEEDS_SHIPMENT,
+         *     ALREADY_RECORDED, ON_SHIPMENT, ON_SHIPMENT_CONTAINER, NO_BASIS (with `basis`), NO_TARIFF_RATE.
+         */
+        EstimateSkip: {
+            /** Code */
+            code: string;
+            scope?: components["schemas"]["CostScope"] | null;
+            basis?: components["schemas"]["RateBasis"] | null;
         };
         /** EtaHistoryResponse */
         EtaHistoryResponse: {
@@ -3346,6 +3545,8 @@ export interface components {
             suppliers_created?: number | null;
             /** Loads Updated */
             loads_updated?: number | null;
+            /** Orders Without Rate */
+            orders_without_rate?: string[] | null;
             /** Containers Created */
             containers_created?: number | null;
             /** Loads Created */
@@ -3492,6 +3693,13 @@ export interface components {
             containers?: components["schemas"]["InvoiceContainerLink"][];
             /** Superseded Estimate Ids */
             superseded_estimate_ids?: string[];
+            /**
+             * Credits Created
+             * @default 0
+             */
+            credits_created: number;
+            /** Credited Cost Ids */
+            credited_cost_ids?: string[];
             /** Notes */
             notes?: string[];
         };
@@ -3544,6 +3752,8 @@ export interface components {
             accepted?: boolean | null;
             /** Description */
             description?: string | null;
+            /** Credit Cost Id */
+            credit_cost_id?: string | null;
             /**
              * Id
              * Format: uuid
@@ -3578,6 +3788,15 @@ export interface components {
             notes: string | null;
             /** Cost Id */
             cost_id: string | null;
+            /**
+             * Refund
+             * @default false
+             */
+            refund: boolean;
+            /** Credit Cost Id */
+            credit_cost_id?: string | null;
+            /** Credit Candidates */
+            credit_candidates?: components["schemas"]["CreditCandidate"][];
         };
         /**
          * InvoiceLineUpdate
@@ -3596,6 +3815,8 @@ export interface components {
             accepted?: boolean | null;
             /** Description */
             description?: string | null;
+            /** Credit Cost Id */
+            credit_cost_id?: string | null;
         };
         /**
          * InvoiceLinesUpdate
@@ -3649,6 +3870,11 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /**
+             * Credit Note
+             * @default false
+             */
+            credit_note: boolean;
             /** Lines */
             lines?: components["schemas"]["InvoiceLineResponse"][];
             /** Document Url */
@@ -3740,6 +3966,8 @@ export interface components {
             /** Skus */
             skus: components["schemas"]["ReportSkuLine"][];
             totals: components["schemas"]["ReportBucket"];
+            /** Orders Without Fx Rate */
+            orders_without_fx_rate?: components["schemas"]["PeriodOrder"][];
         };
         /**
          * LandedCostReport
@@ -3757,6 +3985,20 @@ export interface components {
             totals: {
                 [key: string]: string | null;
             };
+            /** Coefficient */
+            coefficient?: string | null;
+            /**
+             * Containers Without Charge
+             * @default 0
+             */
+            containers_without_charge: number;
+            /**
+             * Containers Held
+             * @default 0
+             */
+            containers_held: number;
+            /** Held Orders */
+            held_orders?: string[];
             /** Fob Missing */
             fob_missing?: string | null;
             /**
@@ -3949,6 +4191,25 @@ export interface components {
             estimated: string;
             /** Containers Without Charge */
             containers_without_charge: number;
+            /**
+             * Containers Held
+             * @default 0
+             */
+            containers_held: number;
+            /** Held Orders */
+            held_orders?: string[];
+            /**
+             * Uncharged Fob
+             * @default 0.00
+             */
+            uncharged_fob: string;
+            /**
+             * Uncharged Fob Missing Lines
+             * @default 0
+             */
+            uncharged_fob_missing_lines: number;
+            /** Orders Without Fx Rate */
+            orders_without_fx_rate?: components["schemas"]["PeriodOrder"][];
             /** Variance Estimated */
             variance_estimated: string;
             /** Variance Actual */
@@ -3997,6 +4258,15 @@ export interface components {
             invoices_failed: number;
             /** Containers Without Cost */
             containers_without_cost: number;
+            /**
+             * Containers Held
+             * @default 0
+             */
+            containers_held: number;
+            /** Held Containers */
+            held_containers?: string[];
+            /** Held Orders */
+            held_orders?: components["schemas"]["PeriodOrder"][];
             /** Containers Without Loads */
             containers_without_loads: number;
             /** Estimates Awaiting Invoice */
@@ -4146,6 +4416,13 @@ export interface components {
             unallocated_costs: number;
             /** Containers Without Cost */
             containers_without_cost: number;
+            /**
+             * Containers Held
+             * @default 0
+             */
+            containers_held: number;
+            /** Held Orders */
+            held_orders?: string[];
             /** Orders Without Fx Rate */
             orders_without_fx_rate?: components["schemas"]["PeriodOrder"][];
         };
@@ -4170,6 +4447,20 @@ export interface components {
             by_cost_type: {
                 [key: string]: string;
             };
+            /** Charged Fob */
+            charged_fob?: string | null;
+            /**
+             * Containers Without Charge
+             * @default 0
+             */
+            containers_without_charge: number;
+            /**
+             * Containers Held
+             * @default 0
+             */
+            containers_held: number;
+            /** Held Orders */
+            held_orders?: string[];
             /** Closed At */
             closed_at?: string | null;
             /** Closed By Name */
@@ -4198,6 +4489,10 @@ export interface components {
              * @default 0
              */
             fob_missing_lines: number;
+            /** Frozen Stock */
+            frozen_stock?: string | null;
+            /** Live Stock */
+            live_stock?: string | null;
         };
         /** PoLineIn */
         PoLineIn: {
@@ -4274,7 +4569,7 @@ export interface components {
              * Code
              * @enum {string}
              */
-            code: "CONTAINERS_WITHOUT_DATE" | "CONTAINERS_WITHOUT_GOODS" | "CONTAINERS_WITHOUT_COST" | "CONTAINERS_WITHOUT_FREIGHT" | "CONTAINERS_WITHOUT_DUTY" | "INVOICES_NOT_READ" | "INVOICES_TO_REVIEW" | "COST_ROWS_REFUSED" | "COSTS_UNALLOCATED" | "ORDERS_WITHOUT_FX_RATE" | "SAME_INVOICE_TWICE" | "CREDIT_NOTE_REVERSES_COST" | "CREDIT_NOTES_SKIPPED" | "PO_SPLIT" | "LINES_WITHOUT_DUTY_RATE" | "DUTY_GAP" | "DUTY_SPREAD_ON_CIF" | "CONTAINERS_WITHOUT_ROUTE" | "CONTAINERS_WITHOUT_SIZE" | "COSTS_NOT_ON_CONTAINER" | "COSTS_TYPED_OTHER" | "CLOCKS_RUNNING" | "NO_SALE_PRICE" | "NO_ASSUMED_COEFFICIENT" | "ESTIMATES_OPEN";
+            code: "CONTAINERS_WITHOUT_DATE" | "CONTAINERS_WITHOUT_GOODS" | "CONTAINERS_WITHOUT_COST" | "CONTAINERS_WITHOUT_FREIGHT" | "CONTAINERS_WITHOUT_DUTY" | "INVOICES_NOT_READ" | "INVOICES_TO_REVIEW" | "COST_ROWS_REFUSED" | "COSTS_UNALLOCATED" | "ORDERS_WITHOUT_FX_RATE" | "SAME_INVOICE_TWICE" | "CREDIT_NOTE_REVERSES_COST" | "CREDIT_NOTES_SKIPPED" | "ORDERS_RATE_UNCONFIRMED" | "PO_SPLIT" | "LINES_WITHOUT_DUTY_RATE" | "DUTY_GAP" | "DUTY_SPREAD_ON_CIF" | "CONTAINERS_WITHOUT_ROUTE" | "CONTAINERS_WITHOUT_SIZE" | "COSTS_NOT_ON_CONTAINER" | "COSTS_TYPED_OTHER" | "CLOCKS_RUNNING" | "NO_SALE_PRICE" | "NO_ASSUMED_COEFFICIENT" | "ESTIMATES_OPEN";
             /**
              * Severity
              * @enum {string}
@@ -4434,6 +4729,13 @@ export interface components {
             fx_rate: string | null;
             /** Fx Date */
             fx_date: string | null;
+            /** Fx Source */
+            fx_source?: string | null;
+            /**
+             * Rate Unconfirmed
+             * @default false
+             */
+            rate_unconfirmed: boolean;
             incoterm: components["schemas"]["Incoterm"] | null;
             /** Order Date */
             order_date: string | null;
@@ -4579,6 +4881,33 @@ export interface components {
             estimated: string;
             /** Containers Without Charge */
             containers_without_charge: number;
+            /**
+             * Containers Held
+             * @default 0
+             */
+            containers_held: number;
+            /** Held Orders */
+            held_orders?: string[];
+            /**
+             * Charged Lines
+             * @default 0
+             */
+            charged_lines: number;
+            /**
+             * Charged Quantity
+             * @default 0.0000
+             */
+            charged_quantity: string;
+            /**
+             * Uncharged Fob
+             * @default 0.00
+             */
+            uncharged_fob: string;
+            /**
+             * Uncharged Fob Missing Lines
+             * @default 0
+             */
+            uncharged_fob_missing_lines: number;
         };
         /** ReportLine */
         ReportLine: {
@@ -4636,6 +4965,13 @@ export interface components {
              * @default false
              */
             without_charge: boolean;
+            /**
+             * Charges Held
+             * @default false
+             */
+            charges_held: boolean;
+            /** Held Orders */
+            held_orders?: string[];
         };
         /**
          * ReportNote
@@ -4688,6 +5024,22 @@ export interface components {
             estimated: string;
             /** Containers Without Charge */
             containers_without_charge: number;
+            /**
+             * Containers Held
+             * @default 0
+             */
+            containers_held: number;
+            /** Held Orders */
+            held_orders?: string[];
+            /**
+             * Charged Quantity
+             * @default 0.0000
+             */
+            charged_quantity: string;
+            /** Unit Charged Fob */
+            unit_charged_fob?: string | null;
+            /** Charged Fob */
+            charged_fob?: string | null;
         };
         /** ReportWarning */
         ReportWarning: {
@@ -5020,6 +5372,13 @@ export interface components {
             fob_missing?: string | null;
             /** Without Charge */
             without_charge: boolean;
+            /**
+             * Charges Held
+             * @default false
+             */
+            charges_held: boolean;
+            /** Held Orders */
+            held_orders?: string[];
         };
         /**
          * SkuBox
@@ -5067,6 +5426,13 @@ export interface components {
             fob_missing_lines: number;
             /** Without Charge */
             without_charge: boolean;
+            /**
+             * Charges Held
+             * @default false
+             */
+            charges_held: boolean;
+            /** Held Orders */
+            held_orders?: string[];
         };
         /** SkuDetailResponse */
         SkuDetailResponse: {
@@ -5163,6 +5529,25 @@ export interface components {
             fob_missing_lines: number;
             /** Containers Without Charge */
             containers_without_charge: number;
+            /**
+             * Containers Held
+             * @default 0
+             */
+            containers_held: number;
+            /** Held Orders */
+            held_orders?: string[];
+            /**
+             * Charged Quantity
+             * @default 0.0000
+             */
+            charged_quantity: string;
+            /** Unit Charged Fob */
+            unit_charged_fob?: string | null;
+            /**
+             * Received Quantity
+             * @default 0.0000
+             */
+            received_quantity: string;
         };
         /** SupplierCreate */
         SupplierCreate: {
@@ -7425,6 +7810,43 @@ export interface operations {
             };
         };
     };
+    enter_by_hand_api_v1_containers__container_id__erp_landed_cost_by_hand_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path: {
+                container_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ErpByHandEntered"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErpLandedCostPreview"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_pushes_api_v1_containers__container_id__erp_pushes_get: {
         parameters: {
             query?: never;
@@ -7998,6 +8420,77 @@ export interface operations {
                 "application/json": components["schemas"]["CostClose"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CostResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_credit_api_v1_costs__cost_id__credits_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path: {
+                cost_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CostCreditCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CostResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_credit_api_v1_costs__cost_id__credits__credit_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Org-Id"?: string | null;
+            };
+            path: {
+                cost_id: string;
+                credit_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

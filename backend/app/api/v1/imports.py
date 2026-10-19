@@ -5,7 +5,8 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, File, Form, UploadFile, status
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
+from sqlalchemy.dialects.postgresql import array
 from sqlalchemy.exc import IntegrityError
 
 from app.api.v1 import schemas
@@ -26,16 +27,25 @@ MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 def _synced(t: TenantSession, jobs: list[ImportJob]) -> set[UUID]:
     """The jobs an ERP sync drove. An ERP sync writes a file too, and without this the imports list
     shows the nightly Odoo sync as "odoo-sync.csv", as if someone had dropped it by hand. The sync run
-    that drove the job is the record of it, so nothing has to be stored on the job."""
+    that drove the job is the record of it, so nothing has to be stored on the job. A large sync is
+    several files: the run links the first, and lists every one in its detail."""
     if not jobs:
         return set()
-    return set(
-        t.db.scalars(
-            select(ErpSyncRun.import_job_id)
-            .where(ErpSyncRun.org_id == t.org_id)
-            .where(ErpSyncRun.import_job_id.in_([j.id for j in jobs]))
+    listed = ErpSyncRun.detail["import_job_ids"]
+    runs = t.db.execute(
+        select(ErpSyncRun.import_job_id, listed)
+        .where(ErpSyncRun.org_id == t.org_id)
+        .where(
+            or_(
+                ErpSyncRun.import_job_id.in_([j.id for j in jobs]),
+                listed.has_any(array([str(j.id) for j in jobs])),
+            )
         )
-    )
+    ).all()
+    named: set[str] = set()
+    for first, every in runs:
+        named.update([str(first)] if first is not None else [], every or [])
+    return {j.id for j in jobs if str(j.id) in named}
 
 
 def _responses(t: TenantSession, jobs: list[ImportJob]) -> list[schemas.ImportJobResponse]:
@@ -163,6 +173,9 @@ def validate_import(
         job.mapping = payload.mapping
         job.status = ImportStatus.PARSED  # a preview that failed is no preview to commit
         job.report = {"error": e.message, "code": e.code, **e.extra}
+        # A file whose every row was refused carries those refusals: the list must not read "0 errors".
+        refused = e.extra.get("report")
+        job.error_count = len(refused.get("errors", [])) if isinstance(refused, dict) else 0
         t.db.commit()
         raise
     t.db.commit()

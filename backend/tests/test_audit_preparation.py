@@ -307,6 +307,31 @@ def test_a_refund_is_counted_once_and_one_reversing_a_standing_cost_blocks_until
     assert item(client, "CREDIT_NOTES_SKIPPED")["count"] == 1
 
 
+def test_a_refund_recorded_as_a_credit_on_the_cost_it_reverses_no_longer_blocks(client: TestClient) -> None:
+    """The ledger takes back F-5; once a person records that refund on F-5 (its « Avoir »), the audit
+    no longer counts a charge the forwarder took back, and nothing blocks — with a smaller refund on
+    record, it still does."""
+    complete_quarter(client)
+    ledger_file(client, "12/03/2026;TRANSDEMO;F-5;THC;;285,00;EUR;MSCU4821990;;")
+    ledger_file(
+        client,
+        "12/03/2026;TRANSDEMO;F-5;THC;;285,00;EUR;MSCU4821990;;",
+        "21/03/2026;TRANSDEMO;AV-5;THC;;-285,00;EUR;MSCU4821990;;",
+        name="grand-livre-avril.csv",
+    )
+    assert item(client, "CREDIT_NOTE_REVERSES_COST")["count"] == 1
+    (thc,) = [c for c in client.get("/api/v1/costs").json() if c["invoice_number"] == "F-5"]
+
+    part = {"amount": "100.00", "credit_number": "AV-5", "credit_date": "2026-03-21"}
+    assert client.post(f"/api/v1/costs/{thc['id']}/credits", json=part).status_code == 201
+    still = item(client, "CREDIT_NOTE_REVERSES_COST")
+    assert (still["count"], still["amount_base"]) == (1, "185.00")  # what is not recorded yet
+
+    rest = {"amount": "185.00", "credit_number": "AV-6", "credit_date": "2026-03-22"}  # a second credit note
+    assert client.post(f"/api/v1/costs/{thc['id']}/credits", json=rest).status_code == 201
+    assert "CREDIT_NOTE_REVERSES_COST" not in codes(client)
+
+
 def test_a_refund_reversing_a_cost_on_a_box_not_loaded_yet_is_said_at_once(client: TestClient) -> None:
     """The box arrived in the period and nothing is loaded in it yet: its own item says so, and the
     refund of one of its charges is said now too, not once the goods are in."""

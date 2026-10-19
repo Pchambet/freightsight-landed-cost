@@ -151,7 +151,7 @@ def test_a_running_clock_is_said_again_every_day_with_the_running_total(
     assert alerts[0].payload["currency"] == "EUR"
 
     title, body = alert_text(alerts[0], "fr", container_number="TCLU7654321", now=NOW)
-    assert title == f"TCLU7654321 : surestaries en cours, 720,00{NBSP}€"
+    assert title == f"TCLU7654321\u00a0: surestaries en cours, 720,00{NBSP}€"
     assert body == (
         "Le dernier jour franc était le 13/09/2026. Les surestaries courent depuis 4 jours. "
         f"720,00{NBSP}€ à ce jour, 180,00{NBSP}€ par jour."
@@ -195,7 +195,7 @@ def test_without_a_rate_card_the_days_are_said_and_the_setting_is_pointed_at(
     assert "amount_to_date" not in alert.payload
 
     title, body = alert_text(alert, "fr", container_number="TCLU7654321", now=NOW)
-    assert title == "TCLU7654321 : surestaries en cours"
+    assert title == "TCLU7654321\u00a0: surestaries en cours"
     assert body == (
         "Le dernier jour franc était le 13/09/2026. Les surestaries courent depuis 4 jours. "
         "Ajoutez un tarif journalier dans vos réglages pour voir le montant."
@@ -219,7 +219,7 @@ def test_detention_has_its_own_words_and_its_own_rate(
     assert alert.payload["amount_to_date"] == "360.00"
 
     title, body = alert_text(alert, "fr", container_number="TCLU7654321", now=NOW)
-    assert title == f"TCLU7654321 : détention en cours, 360,00{NBSP}€"
+    assert title == f"TCLU7654321\u00a0: détention en cours, 360,00{NBSP}€"
     assert body.startswith("Le vide devait être rendu le 14/09/2026. La détention court depuis 3 jours.")
 
 
@@ -357,7 +357,7 @@ def test_the_uncertainty_reaches_the_sentence(db: Session, org: Organization) ->
     assert alert is not None
     assert alert.payload["port_of_discharge_confirmed"] is False
     body = alert_text(alert, "fr", container_number=container.container_number, now=NOW)[1]
-    assert body.endswith("Port de déchargement non confirmé : vérifiez qu'il s'agit bien du port final.")
+    assert body.endswith("Port de déchargement non confirmé\u00a0: vérifiez qu'il s'agit bien du port final.")
 
 
 # ---------------------------------------------------------------------------- nobody typing

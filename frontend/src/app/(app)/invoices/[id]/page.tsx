@@ -36,7 +36,10 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
   const { id } = await params;
   const data = await load(id).catch(() => null);
   const t = await getTranslations("invoices");
-  return { title: data?.invoice.invoice_number ? `${t("title")} ${data.invoice.invoice_number}` : t("title") };
+  if (!data) return { title: t("title") };
+  // One document per tab, so the singular: « Facture MHL-26-0571 », « Avoir … » for a credit note.
+  const kind = data.invoice.credit_note ? "credit" : "invoice";
+  return { title: t("detail.pageTitle", { kind, number: data.invoice.invoice_number ?? "" }).trim() };
 }
 
 export default async function InvoicePage({ params }: Params) {
@@ -74,6 +77,9 @@ export default async function InvoicePage({ params }: Params) {
   // Costs, not lines: lines of one type on one target and currency become one cost, which each of
   // them points to (freight + bunker surcharge on one container).
   const confirmedCostCount = new Set(lines.map((l) => l.cost_id).filter(Boolean)).size;
+  // A credit note creates no cost: it reduces costs already invoiced, each one named on its lines. An
+  // invoice can too, with a discount that has no charge of its type beside it.
+  const creditedCostCount = new Set(lines.map((l) => (l.refund ? l.credit_cost_id : null)).filter(Boolean)).size;
 
   return (
     <>
@@ -99,7 +105,8 @@ export default async function InvoicePage({ params }: Params) {
                 {/* `flagOnly`: the extractor kind just above already says how it was read ("Lecture
                     automatique par règles") — repeating "Lecture automatique" from the confidence
                     tier said the same thing twice. */}
-                <ConfidenceBadge value={invoice.confidence} band={confidenceBandValue} confirmed={invoice.status === "CONFIRMED"} flagOnly className="align-middle" />
+                {/* None on a rejected invoice: its « à relire » would say the invoice is still waiting. */}
+                {invoice.status === "REJECTED" ? null : <ConfidenceBadge value={invoice.confidence} band={confidenceBandValue} confirmed={invoice.status === "CONFIRMED"} flagOnly className="align-middle" />}
               </>
             ) : null}
           </p>
@@ -123,13 +130,17 @@ export default async function InvoicePage({ params }: Params) {
       {detailStep ? <WorkflowNextStep step={detailStep} /> : null}
       {invoice.status === "CONFIRMED" ? (
         <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
-          <p className="text-sm text-slate-500">{t("confirmedBanner", { count: confirmedCostCount, date: dateShort(invoice.created_at, locale) })}</p>
-          <ReopenConfirmedAction invoiceId={invoice.id} costsCreated={confirmedCostCount} />
+          <p className="text-sm text-slate-500">
+            {invoice.credit_note
+              ? t("creditNoteBanner", { count: creditedCostCount, date: dateShort(invoice.created_at, locale) })
+              : t("confirmedBanner", { count: confirmedCostCount, date: dateShort(invoice.created_at, locale) })}
+          </p>
+          <ReopenConfirmedAction invoiceId={invoice.id} costsCreated={confirmedCostCount} costsCredited={creditedCostCount} creditNote={invoice.credit_note} />
         </div>
       ) : null}
       {invoice.status === "REJECTED" ? (
         <div className="rounded-md border border-amber-200 bg-amber-50 text-amber-950 text-sm px-4 py-4 mb-6">
-          <p>{t("rejectedBanner")} {t("rejectedHint")}</p>
+          <p>{t("rejectedBanner", { kind: invoice.credit_note ? "credit" : "invoice" })} {t("rejectedHint")}</p>
           <RejectedInvoiceActions invoiceId={invoice.id} hasLines={lines.length > 0} />
         </div>
       ) : null}

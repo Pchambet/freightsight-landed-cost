@@ -7,18 +7,42 @@ import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { btnPrimary, btnSecondary, input } from "@/components/layout/AppShell";
 import ConfidenceBadge from "@/components/shared/ConfidenceBadge";
-import { addInvoiceLine, patchInvoiceLines, confirmInvoice, rejectInvoice, reopenInvoice, retryInvoice, updateInvoiceLine } from "@/features/actions";
+import { addInvoiceLine, patchInvoiceLines, confirmInvoice, rejectInvoice, retryInvoice, updateInvoiceLine } from "@/features/actions";
 import InvoiceContinueLinks, { type ContainerLink } from "@/features/invoices/InvoiceContinueLinks";
 import { openHeaderEditor } from "@/features/invoices/InvoiceHeaderEditor";
 import { formatInvoiceNote, isDuplicateCostNote, isInformativeNote, splitInvoiceNotes } from "@/features/invoices/lineNotes";
 import type { InvoiceLineResponse, InvoiceResponse } from "@/lib/api/client";
 import { COST_SCOPES, COST_TYPES, type CostScope, type CostType } from "@/lib/domain";
-import { amountPlaceholder, decimalDisplay, money } from "@/lib/format";
+import { amountPlaceholder, dateShort, decimalDisplay, money } from "@/lib/format";
 
 export type Target = { id: string; label: string };
 export type Targets = Record<CostScope, Target[]>;
 
-function LineRow({ invoiceId, line, targets, editable, confirmed }: { invoiceId: string; line: InvoiceLineResponse; targets: Targets; editable: boolean; confirmed: boolean }) {
+/**
+ * A refund line — any line of a credit note, or a negative line with no charge of its type beside it
+ * — reduces an invoiced cost instead of creating one. The cost it reduces, as the API will read it at
+ * confirmation: the one named on the line; else the one named on another refund line of the same
+ * type, target and currency; else the only invoiced cost of that type on that target in that currency.
+ */
+function refundCosts(lines: InvoiceLineResponse[]): Map<string, string | null> {
+  const key = (l: InvoiceLineResponse) => [l.scope, l.target_id, l.cost_type, l.currency].join("|");
+  const named = new Map<string, Set<string>>();
+  for (const l of lines) if (l.refund && l.credit_cost_id) named.set(key(l), (named.get(key(l)) ?? new Set()).add(l.credit_cost_id));
+  const out = new Map<string, string | null>();
+  for (const l of lines) {
+    if (!l.refund) continue;
+    const siblings = [...(named.get(key(l)) ?? [])];
+    const same = (l.credit_candidates ?? []).filter((c) => c.currency === l.currency);
+    out.set(l.id, l.credit_cost_id ?? (siblings.length === 1 ? siblings[0] : same.length === 1 ? same[0].id : null));
+  }
+  return out;
+}
+
+function needsRefundCost(line: InvoiceLineResponse, refundTo: string | null | undefined): boolean {
+  return !!line.refund && !!line.target_id && !!line.cost_type && !refundTo;
+}
+
+function LineRow({ invoiceId, line, targets, editable, confirmed, rejected, refundTo }: { invoiceId: string; line: InvoiceLineResponse; targets: Targets; editable: boolean; confirmed: boolean; rejected: boolean; refundTo: string | null }) {
   const t = useTranslations("invoices.line");
   const noteT = useTranslations("invoices.lineNotes");
   const typeLabel = useTranslations("domain.costType");
@@ -58,7 +82,8 @@ function LineRow({ invoiceId, line, targets, editable, confirmed }: { invoiceId:
   const options = scope ? targets[scope] : [];
   // What still stands between this line and a cost. Read from the saved line, not from the fields
   // being edited: the marker moves when the save has held, not while a list is open.
-  const missing = editable && line.accepted ? [!line.cost_type ? t("missingType") : null, !line.scope || !line.target_id ? t("missingTarget") : null].filter(Boolean) : [];
+  const missing = editable && line.accepted ? [!line.cost_type ? t("missingType") : null, !line.scope || !line.target_id ? t("missingTarget") : null, needsRefundCost(line, refundTo) ? t("missingRefund") : null].filter(Boolean) : [];
+  const candidates = line.credit_candidates ?? [];
   const amountDirty = amount !== decimalDisplay(line.amount, locale) || currency !== line.currency;
   return (
     <li data-incomplete={missing.length > 0 ? "true" : undefined} className={`px-5 py-4 border-l-2 ${missing.length > 0 ? "border-l-amber-400" : "border-l-transparent"} ${hasDuplicate ? "bg-red-50/80 ring-1 ring-inset ring-red-200" : accepted ? "" : "bg-slate-50/60"}`}>
@@ -68,8 +93,10 @@ function LineRow({ invoiceId, line, targets, editable, confirmed }: { invoiceId:
           <div className="flex items-baseline justify-between gap-3">
             <div className="text-sm font-medium text-slate-900 truncate">{line.line_no}. {line.description}</div>
             <span className="flex items-center gap-2 shrink-0">
+              {line.refund ? <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[11px] font-medium text-emerald-800 ring-1 ring-inset ring-emerald-600/20">{t("refund")}</span> : null}
               {missing.length > 0 ? <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-800 ring-1 ring-inset ring-amber-600/20">{t("toComplete", { what: missing.join(", ") })}</span> : null}
-              <ConfidenceBadge value={line.confidence} band={line.confidence_band} confirmed={confirmed} />
+              {/* A rejected invoice has nothing left to review: « à relire » would say it is still open. */}
+              {rejected ? null : <ConfidenceBadge value={line.confidence} band={line.confidence_band} confirmed={confirmed} />}
             </span>
           </div>
           {editable ? (
@@ -90,6 +117,30 @@ function LineRow({ invoiceId, line, targets, editable, confirmed }: { invoiceId:
                 {options.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
               </select>
               {amountDirty ? <button type="button" onClick={() => save()} disabled={!dirty || pending} className={btnSecondary}>{pending ? <Loader2 className="w-4 h-4 animate-spin" /> : t("save")}</button> : null}
+              {/* The cost this refund reduces, among the invoiced costs of its type on its target. */}
+              {line.refund && line.target_id && line.cost_type ? (
+                candidates.length ? (
+                  <label className="col-span-2 md:col-span-5 flex flex-wrap items-center gap-2 text-xs text-slate-600">
+                    <span className="font-medium">{t("refundTo")}</span>
+                    <select
+                      aria-label={t("refundTo")}
+                      value={refundTo ?? ""}
+                      disabled={pending}
+                      onChange={(e) => save({ credit_cost_id: e.target.value || null })}
+                      className={`${input} !w-auto max-w-full ${accepted && !refundTo ? "border-amber-400 bg-amber-50/50" : ""}`}
+                    >
+                      <option value="">{t("refundChoose")}</option>
+                      {candidates.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {t("refundOption", { date: dateShort(c.cost_date, locale), invoice: [c.vendor, c.invoice_number].filter(Boolean).join(" · ") || "—", amount: money(c.amount, c.currency, locale) })}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : (
+                  <p className="col-span-2 md:col-span-5 text-xs text-amber-700">{t("refundNone")}</p>
+                )
+              ) : null}
             </div>
           ) : (
             <div className="mt-1 text-xs text-slate-500">
@@ -263,13 +314,16 @@ export default function ReviewPanel({ invoice, targets, pageHasNextStep = false 
       // own record that it went past a refusal — and never land on a line's own notes, so this toast
       // is the only place they are ever shown.
       const forced = r.data.notes.map((n) => formatInvoiceNote(n, noteT, (k) => typeLabel(k as CostType), locale, invoice.currency ?? "EUR")).join(" ");
-      toast.success(t("confirmed", { count: r.data.costsCreated }), forced ? { description: forced, duration: 10000 } : undefined);
+      // A credit note creates no cost: it says how many it reduced instead of « no cost created ».
+      const done = [r.data.costsCreated || !r.data.creditsCreated ? t("confirmed", { count: r.data.costsCreated }) : null, r.data.creditsCreated ? t("creditsConfirmed", { count: r.data.creditsCreated }) : null].filter(Boolean).join(" · ");
+      toast.success(done, forced ? { description: forced, duration: 10000 } : undefined);
       setContinueTo(r.data.containers);
       router.refresh();
     });
   const lines = invoice.lines ?? [];
   const acceptedCount = lines.filter((l) => l.accepted).length;
-  const incomplete = lines.filter((l) => l.accepted && !(l.target_id && l.cost_type && l.scope)).length;
+  const refunds = refundCosts(lines);
+  const incomplete = lines.filter((l) => l.accepted && (!(l.target_id && l.cost_type && l.scope) || needsRefundCost(l, refunds.get(l.id)))).length;
   const ready = acceptedCount > 0 && incomplete === 0;
   // Lines without a target, accepted or not: a line is attached first and judged after.
   const unattached = lines.filter((l) => !l.target_id).map((l) => l.id);
@@ -356,7 +410,7 @@ export default function ReviewPanel({ invoice, targets, pageHasNextStep = false 
         </div>
       ) : null}
       <ul ref={listRef} className="divide-y divide-slate-200">
-        {lines.map((l) => <LineRow key={`${l.id}:${l.accepted}:${l.cost_type ?? ""}:${l.scope ?? ""}:${l.target_id ?? ""}:${l.amount}:${l.currency}`} invoiceId={invoice.id} line={l} targets={targets} editable={editable} confirmed={invoice.status === "CONFIRMED"} />)}
+        {lines.map((l) => <LineRow key={`${l.id}:${l.accepted}:${l.cost_type ?? ""}:${l.scope ?? ""}:${l.target_id ?? ""}:${l.amount}:${l.currency}:${l.credit_cost_id ?? ""}`} invoiceId={invoice.id} line={l} targets={targets} editable={editable} confirmed={invoice.status === "CONFIRMED"} rejected={invoice.status === "REJECTED"} refundTo={refunds.get(l.id) ?? null} />)}
       </ul>
       {editable ? (
         <>
@@ -396,7 +450,7 @@ export default function ReviewPanel({ invoice, targets, pageHasNextStep = false 
               {pending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
               {forceConfirm ? t("confirmAnyway") : acceptedCount ? t("confirm", { count: acceptedCount }) : t("confirmNone")}
             </button>
-            <button type="button" disabled={pending} onClick={() => run(() => rejectInvoice(invoice.id), () => t("rejected"))} className={btnSecondary}>{t("reject")}</button>
+            <button type="button" disabled={pending} onClick={() => run(() => rejectInvoice(invoice.id), () => t("rejected", { kind: invoice.credit_note ? "credit" : "invoice" }))} className={btnSecondary}>{t("reject")}</button>
             <button type="button" disabled={pending} onClick={() => run(() => retryInvoice(invoice.id), () => t("retried"))} className="text-sm text-slate-500 hover:underline">{t("retry")}</button>
             <span className="text-xs text-slate-500 ml-auto">{new Intl.DateTimeFormat(locale === "fr" ? "fr-FR" : "en-GB", { dateStyle: "medium" }).format(new Date(invoice.created_at))}</span>
           </div>
@@ -406,21 +460,7 @@ export default function ReviewPanel({ invoice, targets, pageHasNextStep = false 
       {invoice.status === "FAILED" ? (
         <div className="px-5 py-4 border-t border-slate-200 flex items-center gap-3">
           <button type="button" disabled={pending} onClick={() => run(() => retryInvoice(invoice.id), () => t("retried"))} className={btnSecondary}>{t("retry")}</button>
-          <button type="button" disabled={pending} onClick={() => run(() => rejectInvoice(invoice.id), () => t("rejected"))} className="text-sm text-slate-500 hover:underline">{t("reject")}</button>
-        </div>
-      ) : null}
-      {invoice.status === "REJECTED" ? (
-        <div className="px-5 py-4 border-t border-slate-200 flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            disabled={pending || lines.length === 0}
-            onClick={() => run(() => reopenInvoice(invoice.id), () => t("reopened"))}
-            className={btnPrimary}
-          >
-            {pending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
-            {t("reopenAction")}
-          </button>
-          <button type="button" disabled={pending} onClick={() => run(() => retryInvoice(invoice.id), () => t("retried"))} className={btnSecondary}>{t("retry")}</button>
+          <button type="button" disabled={pending} onClick={() => run(() => rejectInvoice(invoice.id), () => t("rejected", { kind: invoice.credit_note ? "credit" : "invoice" }))} className="text-sm text-slate-500 hover:underline">{t("reject")}</button>
         </div>
       ) : null}
     </div>

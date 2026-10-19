@@ -12,14 +12,16 @@ from __future__ import annotations
 import csv
 import io
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from typing import Any
+from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from app.domain.models import SkuCostHistory
+from app.domain.models import PeriodCloseLine, SkuCostHistory
 
 TODAY = datetime.now(UTC)
 # Both boxes in one month whatever the day the suite runs: the 5th and the 20th of last month.
@@ -91,6 +93,7 @@ def test_the_overview_leaves_the_bare_container_out_of_landed_and_says_what_is_e
     # 2 250 € of goods, of which the 1 000 € in the charged box landed at 1 400 €: 1.40, not 1.18.
     assert basis(current) == ("2250.00", "1400.00", "1.4000", "100.00", 1)
     assert current["charged_fob"] == "1000.00" and current["containers"] == 2
+    assert current["uncharged_fob"] == "1250.00"  # what the fees and the coefficient are not over
     assert sum(b["containers_without_charge"] for b in body["by_month"]) == 1
     skus = {s["sku"]: s for s in body["skus"]}
     assert (skus["A"]["landed"], skus["A"]["unit_landed_cost"], skus["A"]["coefficient"]) == (
@@ -238,3 +241,107 @@ def test_closing_the_month_leaves_its_cost_price_export_as_it_was(
     closed = client.post(f"/api/v1/periods/{MONTH}/close")
     assert closed.status_code == 201, closed.text
     assert prices() == live  # the frozen month takes no cost price from the bare box either
+
+
+def test_an_order_over_a_bare_container_adds_up_its_landed_cost_over_the_charged_one(
+    client: TestClient, boxes: dict[str, Any]
+) -> None:
+    """PO-1 is spread over both boxes: its total counted the bare box's FOB as landed while that box's
+    line read « — », so the lines did not add up to the total."""
+    (po,) = [p for p in client.get("/api/v1/purchase-orders").json() if p["po_number"] == "PO-1"]
+    report = client.get(f"/api/v1/landed-costs/purchase-orders/{po['id']}").json()
+    totals = report["totals"]
+    assert (totals["fob"], totals["charged_fob"], totals["landed"], totals["allocated"]) == (
+        "2000.00",
+        "1000.00",
+        "1400.00",
+        "400.00",
+    )
+    assert (report["coefficient"], report["containers_without_charge"]) == ("1.4000", 1)
+    charged = [ln for ln in report["lines"] if not ln["without_charge"]]
+    assert sum(Decimal(ln["landed"]) for ln in charged) == Decimal(totals["landed"])
+
+    bare = client.get(f"/api/v1/landed-costs/containers/{boxes['bare']}").json()
+    assert (bare["totals"]["fob"], bare["totals"]["landed"], bare["coefficient"]) == ("1250.00", None, None)
+    assert bare["containers_without_charge"] == 1 and bare["fob_missing"] is None
+
+
+def test_the_month_reads_the_overview_s_landed_cost_and_coefficient_open_or_closed(
+    client: TestClient, db: Session, boxes: dict[str, Any]
+) -> None:
+    def month() -> dict[str, Any]:
+        (found,) = [p for p in client.get("/api/v1/periods").json()["periods"] if p["period"] == MONTH]
+        return dict(found)
+
+    current = client.get("/api/v1/reports/overview", params=PERIOD).json()["current"]
+    keys = ("fob", "landed", "charged_fob", "coefficient", "containers_without_charge")
+    expected = ("2250.00", "1400.00", "1000.00", "1.4000", 1)
+    assert tuple(current[k] for k in keys) == expected
+    assert tuple(month()[k] for k in keys) == expected and month()["live_landed"] == "1400.00"
+
+    assert client.post(f"/api/v1/periods/{MONTH}/close").status_code == 201
+    assert tuple(month()[k] for k in keys) == expected and month()["drift"] == "0.00"
+    # The frozen lines keep their stock value — the bare box at its FOB — and say it had no charge.
+    lines = list(db.scalars(select(PeriodCloseLine)))
+    assert {(ln.container_id, ln.without_charge, str(ln.landed)) for ln in lines} == {
+        (UUID(boxes["charged"]), False, "1400.00"),
+        (UUID(boxes["bare"]), True, "1000.00"),
+        (UUID(boxes["bare"]), True, "250.00"),
+    }
+    stock = client.get("/api/v1/exports/period-close.csv", params={"period": MONTH, "locale": "en"})
+    rows = {r["sku"]: r for r in csv.DictReader(io.StringIO(stock.text.lstrip("﻿")))}
+    assert (rows["A"]["landed"], rows["A"]["containers_without_charge"]) == ("2400.00", "1")
+    assert (rows["B"]["landed"], rows["B"]["containers_without_charge"]) == ("250.00", "1")
+    # A month closed before the close recorded it reads the bare box from the charges it froze.
+    db.execute(update(PeriodCloseLine).values(without_charge=None))
+    db.flush()
+    assert tuple(month()[k] for k in keys) == expected
+
+
+def test_the_landed_cost_export_leaves_the_landed_figures_of_a_bare_container_blank(
+    client: TestClient, boxes: dict[str, Any]
+) -> None:
+    res = client.get("/api/v1/exports/landed-costs.csv", params={"locale": "en"})
+    assert res.status_code == 200, res.text
+    rows = list(csv.DictReader(io.StringIO(res.text.lstrip("﻿"))))
+    by_box = {(r["container_number"], r["sku"]): r for r in rows if r["row_type"] == "LINE"}
+    bare = by_box[("MSCU2222222", "A")]
+    assert (bare["fob"], bare["landed"], bare["unit_landed_cost"], bare["without_charge"]) == (
+        "1000.00",
+        "",
+        "",
+        "true",
+    )
+    charged = by_box[("MSCU1111111", "A")]
+    assert (charged["landed"], charged["unit_landed_cost"], charged["without_charge"]) == (
+        "1400.00",
+        "140.0000",
+        "false",
+    )
+
+
+def test_a_closed_month_s_frozen_figure_drift_and_today_s_figure_add_up(
+    client: TestClient, boxes: dict[str, Any]
+) -> None:
+    assert client.post(f"/api/v1/periods/{MONTH}/close").status_code == 201
+    late = cost(boxes["bare"], "OCEAN_FREIGHT", "125.00")
+    assert client.post("/api/v1/costs", json=late).status_code == 201
+    month = client.get(f"/api/v1/periods/{MONTH}").json()["summary"]
+    # The goods as booked at the close (the bare box at its FOB), the late freight, and today's value.
+    assert (month["frozen_stock"], month["drift"], month["live_stock"]) == ("2650.00", "125.00", "2775.00")
+    assert Decimal(month["frozen_stock"]) + Decimal(month["drift"]) == Decimal(month["live_stock"])
+
+
+def test_an_article_row_gives_its_purchase_price_on_the_goods_its_landed_cost_is_over(
+    client: TestClient, boxes: dict[str, Any]
+) -> None:
+    (a, b) = client.get("/api/v1/reports/landed-cost", params={**PERIOD, "group_by": "supplier"}).json()[
+        "skus"
+    ]
+    assert (a["quantity"], a["charged_quantity"], a["unit_charged_fob"]) == ("20.0000", "10.0000", "100.0000")
+    assert (b["charged_quantity"], b["unit_charged_fob"]) == ("0.0000", None)
+    # The goods' value beside the landed cost, over the same lines: 1 000 € landed at 1 400 €.
+    assert (a["charged_fob"], a["landed"]) == ("1000.00", "1400.00") and b["charged_fob"] is None
+    summary = {s["sku"]: s for s in client.get("/api/v1/reports/skus").json()["skus"]}["A"]
+    assert (summary["charged_quantity"], summary["unit_charged_fob"]) == ("10.0000", "100.0000")
+    assert summary["received_quantity"] == "20.0000"

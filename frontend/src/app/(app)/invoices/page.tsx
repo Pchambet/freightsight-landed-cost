@@ -74,7 +74,7 @@ export default async function InvoicesPage({ searchParams }: { searchParams: Pro
                   <td className={`${td} text-slate-600`}>{dateShort(i.invoice_date, locale)}</td>
                   <td className={tdRight}>{i.total_amount && i.currency ? money(i.total_amount, i.currency, locale) : "—"}</td>
                   <td className={td}><span className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${STATUS_STYLE[i.status]}`}>{statusLabel(i.status)}</span></td>
-                  <td className={tdRight}><ConfidenceBadge value={i.confidence} band={i.confidence_band} confirmed={i.status === "CONFIRMED"} /></td>
+                  <td className={tdRight}>{i.status === "REJECTED" ? null : <ConfidenceBadge value={i.confidence} band={i.confidence_band} confirmed={i.status === "CONFIRMED"} />}</td>
                   <td className={`${td} text-xs text-slate-500 max-w-[16rem] truncate`}>{i.filename ?? "—"}</td>
                 </tr>
               ))}

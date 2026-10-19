@@ -4,6 +4,8 @@ import io
 import re
 import time
 import zipfile
+from collections.abc import Callable
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -37,6 +39,22 @@ def test_parse_decimal_formats() -> None:
     assert parse_decimal("") is None
     with pytest.raises(ImportError_):
         parse_decimal("12,5 pcs")
+
+
+@pytest.mark.parametrize("value", ["Infinity", "-inf", "NaN", "sNaN"])
+def test_a_value_that_is_no_finite_number_is_refused_by_name(value: str) -> None:
+    """Decimal reads « Infinity » and « NaN » as numbers: a line total divided by them raised a 500."""
+    with pytest.raises(ImportError_) as exc:
+        parse_decimal(value)
+    assert exc.value.code == "NOT_A_NUMBER"
+
+
+@pytest.mark.parametrize("value", ["1e30", "1E+12", "1 000 000 000 000", "-1e12"])
+def test_a_number_no_column_of_the_books_holds_is_refused_by_name(value: str) -> None:
+    with pytest.raises(ImportError_) as exc:
+        parse_decimal(value)
+    assert exc.value.code == "NUMBER_TOO_LARGE"
+    assert parse_decimal("999 999 999 999,99") == Decimal("999999999999.99")
 
 
 def test_normalize_header_strips_accents_and_punctuation() -> None:
@@ -134,7 +152,7 @@ def test_a_number_in_scientific_notation_with_a_comma_is_refused() -> None:
     with pytest.raises(ImportError_) as exc:
         parse_decimal("3,70012E+12")
     assert exc.value.code == "AMBIGUOUS_SCIENTIFIC"
-    assert parse_decimal("3.70012E+12") == Decimal("3.70012E+12")  # unambiguous, still accepted
+    assert parse_decimal("3.70012E+5") == Decimal("370012")  # unambiguous, still accepted
 
 
 def test_the_header_is_found_under_a_title_block_and_the_totals_row_is_dropped() -> None:
@@ -382,6 +400,229 @@ def test_a_workbook_whose_shared_strings_inflate_past_their_cap_is_refused(
     assert exc.value.code == "XLSX_TOO_LARGE"
     monkeypatch.setattr(parsing, "MAX_XLSX_STRINGS_BYTES", 40_000)
     assert parse_table(content, "f.xlsx").rows == [{"po_number": "PO-1", "sku": "A"}]
+
+
+def _rewritten(content: bytes, parts: dict[str, bytes | Callable[[bytes], bytes]]) -> bytes:
+    """The same workbook with some parts replaced, or rewritten from what they hold."""
+    source, out = zipfile.ZipFile(io.BytesIO(content)), io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as target:
+        for item in source.infolist():
+            data = source.read(item.filename)
+            change = parts.pop(item.filename, data)
+            target.writestr(item, change(data) if callable(change) else change)
+        for name, added in parts.items():
+            target.writestr(name, added(b"") if callable(added) else added)
+    return out.getvalue()
+
+
+def _with_rows(content: bytes, rows: bytes) -> bytes:
+    sheet = "xl/worksheets/sheet1.xml"
+    return _rewritten(content, {sheet: lambda data: data.replace(b"</sheetData>", rows + b"</sheetData>")})
+
+
+def test_every_row_element_counts_against_the_sheet_whatever_it_holds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Rows holding no value were dropped before anything counted them: 3 million `<row/>` in a 28 KB
+    upload took 18 s and 330 MB, and one `<row r="10000000"/>` made the reader pad ten million rows."""
+    content = _xlsx(["po_number", "sku"], ["PO-1", "A"])
+    started = time.monotonic()
+    with pytest.raises(ImportError_) as exc:
+        parse_table(_with_rows(content, b'<row r="10000000"/>'), "f.xlsx")
+    assert exc.value.code == "TOO_MANY_ROWS" and exc.value.params == {"limit": parsing.MAX_ROWS}
+    assert time.monotonic() - started < 1
+
+    monkeypatch.setattr(parsing, "MAX_SHEET_ROWS", 1000)
+    with pytest.raises(ImportError_) as exc:
+        parse_table(_with_rows(content, b"<row/>" * 999), "f.xlsx")
+    assert exc.value.code == "TOO_MANY_ROWS"
+    with pytest.raises(ImportError_) as exc:
+        parse_table(_with_rows(content, b'<row r="1001"/>'), "f.xlsx")
+    assert exc.value.code == "TOO_MANY_ROWS"
+    # up to the sheet's last row, formatted rows with nothing in them are read past, not kept
+    honest = _with_rows(
+        content, b"".join(b'<row r="%d" s="1" customFormat="1"/>' % i for i in range(3, 1001))
+    )
+    assert parse_table(honest, "f.xlsx").rows == [{"po_number": "PO-1", "sku": "A"}]
+
+
+def test_every_cell_element_counts_against_the_cap_valued_or_not(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Eight million empty `<c/>` in a 160 KB upload took 15 s and 2.9 GB, the row then found blank."""
+    monkeypatch.setattr(parsing, "MAX_CELLS", 100)
+    content = _with_rows(
+        _xlsx(["po_number", "sku"], ["PO-1", "A"]), b'<row r="3">' + b'<c s="0"/>' * 97 + b"</row>"
+    )
+    with pytest.raises(ImportError_) as exc:
+        parse_table(content, "f.xlsx")
+    assert exc.value.code == "TOO_MANY_CELLS" and exc.value.params == {"limit": 100}
+
+
+def test_only_the_first_worksheet_is_read_and_nothing_it_points_to() -> None:
+    """A chartsheet was read whole whatever its size (32 MB inflated took 600 MB), and every sheet entry
+    parsed the sheet's relations again (30 entries on one 4 MB part: 6 s). Neither is opened any more:
+    here both are not even XML, and the file reads."""
+    openpyxl = pytest.importorskip("openpyxl")
+    wb = openpyxl.Workbook()
+    wb.active.append(["po_number", "sku"])
+    wb.active.append(["PO-1", "A"])
+    wb.create_chartsheet(index=0)
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    entries = b"".join(b'<sheet name="S%d" sheetId="%d" r:id="rId2"/>' % (i, i + 10) for i in range(30))
+    content = _rewritten(
+        buffer.getvalue(),
+        {
+            "xl/chartsheets/sheet1.xml": b"\x00" * 1000,
+            "xl/worksheets/_rels/sheet1.xml.rels": b"\x00" * 1000,
+            "xl/workbook.xml": lambda data: data.replace(b"</sheets>", entries + b"</sheets>"),
+        },
+    )
+    assert parse_table(content, "f.xlsx").rows == [{"po_number": "PO-1", "sku": "A"}]
+
+
+def test_a_cell_longer_than_a_spreadsheet_holds_is_refused_by_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    """One 150 MB cell was read whole into memory (400 MB) before anything looked at it."""
+    monkeypatch.setattr(parsing, "MAX_CELL_CHARS", 1000)
+    with pytest.raises(ImportError_) as exc:
+        parse_table(_xlsx(["po_number", "sku"], ["PO-1", "x" * 1001]), "f.xlsx")
+    assert exc.value.code == "XLSX_UNREADABLE"
+    longest = parse_table(_xlsx(["po_number", "sku"], ["PO-1", "x" * 1000]), "f.xlsx")
+    assert longest.rows[0]["sku"] == "x" * 1000
+
+
+def test_every_xml_element_of_the_workbook_counts_whatever_its_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only rows and cells were counted: 50 million `<v/>` inside one cell, or unknown tags beside the
+    rows, are a 200 KB upload that cost 25 s of the API's one process, each element a Python call."""
+    monkeypatch.setattr(parsing, "MAX_XLSX_ELEMENTS", 300)
+    content = _xlsx(["po_number", "sku"], ["PO-1", "A"])
+    assert parse_table(content, "f.xlsx").rows == [{"po_number": "PO-1", "sku": "A"}]
+    for filler in (b'<row r="3"><c r="A3">' + b"<v/>" * 300 + b"</c></row>", b"<x/>" * 300):
+        with pytest.raises(ImportError_) as exc:
+            parse_table(_with_rows(content, filler), "f.xlsx")
+        assert exc.value.code == "TOO_MANY_CELLS"
+    ns = b'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+    styles = b"<styleSheet %s><cellXfs>%s</cellXfs></styleSheet>" % (ns, b"<xf/>" * 300)
+    with pytest.raises(ImportError_) as exc:
+        parse_table(_rewritten(content, {"xl/styles.xml": styles}), "f.xlsx")
+    assert exc.value.code == "TOO_MANY_CELLS"
+
+
+def test_a_conditional_format_s_number_format_does_not_change_a_cell_s() -> None:
+    """A conditional format brings its own number formats, in `<dxfs>`, and may reuse a cell format's
+    id: only those of `<numFmts>` say how a cell reads, so a date stays a date."""
+    openpyxl = pytest.importorskip("openpyxl")
+    wb = openpyxl.Workbook()
+    wb.active.append(["po_number", "order_date"])
+    wb.active.append(["PO-1", date(2026, 7, 15)])
+    wb.active["B2"].number_format = "dd/mm/yyyy"
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    content = buffer.getvalue()
+    baseline = parse_table(content, "f.xlsx").rows
+    styles = zipfile.ZipFile(io.BytesIO(content)).read("xl/styles.xml").decode()
+    (date_id,) = re.findall(r'numFmtId="(\d+)" formatCode="dd/mm/yyyy"', styles)
+    dxf = f'<dxfs count="1"><dxf><numFmt numFmtId="{date_id}" formatCode="0.00"/></dxf></dxfs>'
+    styles = re.sub(r"<dxfs[^>]*/>|<dxfs.*?</dxfs>", "", styles)
+    styles = styles.replace("</styleSheet>", dxf + "</styleSheet>")
+    assert parse_table(_rewritten(content, {"xl/styles.xml": styles.encode()}), "f.xlsx").rows == baseline
+
+
+def test_a_number_format_longer_than_excel_writes_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Which styles are dates is openpyxl's test, a regular expression quadratic in a format's unclosed
+    `[`: one 40 000-character format named by fifty styles, a 4 KB upload, cost 52 s — and one 8 MB format,
+    hours. Excel's own formats stop at 255 characters, and each is tested once, not once per style."""
+    ns = b'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+
+    def styled(code: bytes) -> bytes:
+        styles = b'<styleSheet %s><numFmts><numFmt numFmtId="164" formatCode="%s"/></numFmts>' % (ns, code)
+        styles += b"<cellXfs>%s</cellXfs></styleSheet>" % (b'<xf numFmtId="164"/>' * 50)
+        return _rewritten(_xlsx(["po_number", "sku"], ["PO-1", "A"]), {"xl/styles.xml": styles})
+
+    started = time.monotonic()
+    with pytest.raises(ImportError_) as exc:
+        parse_table(styled(b"[" * 40_000), "f.xlsx")
+    assert exc.value.code == "XLSX_UNREADABLE" and time.monotonic() - started < 1
+    calls: list[str] = []
+
+    def is_date_format(code: str) -> bool:
+        calls.append(code)
+        return False
+
+    monkeypatch.setattr("openpyxl.styles.numbers.is_date_format", is_date_format)
+    assert parse_table(styled(b"[" * 255), "f.xlsx").rows == [{"po_number": "PO-1", "sku": "A"}]
+    assert calls.count("[" * 255) == 1
+
+
+def test_an_xml_token_larger_than_a_spreadsheet_writes_is_refused_as_it_comes() -> None:
+    """Expat keeps a tag or a comment whole until it ends: one 150 MB attribute, a 154 KB upload, took
+    760 MB — its text, then a Python string of it. A cell's text comes in pieces and is not one."""
+    content = _xlsx(["po_number", "sku"], ["PO-1", "A"])
+    huge = b"a" * (parsing.MAX_XML_TOKEN_BYTES + 2 * 65536)  # seen once the next chunk of 64 KB is in
+    for token in (b'<row r="3" x="%s"/>' % huge, b"<!--%s-->" % huge, b"<%s/>" % huge):
+        with pytest.raises(ImportError_) as exc:
+            parse_table(_with_rows(content, token), "f.xlsx")
+        assert exc.value.code == "XLSX_UNREADABLE"
+    cell = b'<row r="3"><c r="A3" t="inlineStr"><is><t>%s</t></is></c></row>' % (
+        b"x" * parsing.MAX_CELL_CHARS
+    )
+    assert (
+        len(parse_table(_with_rows(content, cell), "f.xlsx").rows[1]["po_number"]) == parsing.MAX_CELL_CHARS
+    )
+
+
+def _shared_strings(content: bytes) -> bytes:
+    """The same workbook with its text in a shared strings part, as Excel writes it: one entry in rich
+    runs, one with a phonetic reading that is not part of the text."""
+    found: list[bytes] = []
+
+    def to_index(match: re.Match[bytes]) -> bytes:
+        found.append(match.group(2))
+        return match.group(1) + b' t="s"><v>%d</v></c>' % (len(found) - 1)
+
+    sheet = zipfile.ZipFile(io.BytesIO(content)).read("xl/worksheets/sheet1.xml")
+    sheet = re.sub(rb'(<c r="[A-Z]+\d+")[^>]*t="inlineStr"><is><t>([^<]*)</t></is></c>', to_index, sheet)
+    entries = [b"<si><t>%s</t></si>" % text for text in found]
+    entries[0] = b"<si><r><t>po_</t></r><r><rPr><b/></rPr><t>number</t></r></si>"
+    entries[1] = b'<si><t>sku</t><rPh sb="0" eb="1"><t>SKU-PHONETIC</t></rPh></si>'
+    ns = b'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+    strings = b"<sst %s>%s</sst>" % (ns, b"".join(entries))
+    return _with_part(
+        _rewritten(content, {"xl/worksheets/sheet1.xml": sheet}),
+        "xl/sharedStrings.xml",
+        strings,
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml",
+        "sharedStrings",
+    )
+
+
+@pytest.mark.parametrize("epoch", ["1900", "1904"])
+@pytest.mark.parametrize("shared", [False, True], ids=["inline", "shared"])
+def test_an_xlsx_reads_each_kind_of_cell_as_excel_shows_it(epoch: str, shared: bool) -> None:
+    openpyxl = pytest.importorskip("openpyxl")
+    from openpyxl.utils.datetime import CALENDAR_MAC_1904
+
+    wb = openpyxl.Workbook()
+    if epoch == "1904":
+        wb.epoch = CALENDAR_MAC_1904
+    ws = wb.active
+    ws.append(["po_number", "sku", "order_date", "quantity", "unit_price", "flag", "duration"])
+    # a spreadsheet's dates are naive: Excel has no time zone
+    ws.append(["PO-1", "A", datetime(2026, 7, 1), 10, 0.1, True, None])  # noqa: DTZ001
+    ws.append(["PO-2", "B", datetime(2026, 7, 2, 14, 30), 3700123456789, 1e-7, False, timedelta(hours=30)])  # noqa: DTZ001
+    ws["G3"].number_format = "[h]:mm:ss"
+    ws["H2"] = "=1+1"
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    content = _shared_strings(buffer.getvalue()) if shared else buffer.getvalue()
+
+    table = parse_table(content, "f.xlsx")
+    assert table.columns == ["po_number", "sku", "order_date", "quantity", "unit_price", "flag", "duration"]
+    assert table.rows == [
+        {"po_number": "PO-1", "sku": "A", "order_date": "2026-07-01 00:00:00", "quantity": "10",
+         "unit_price": "0.1", "flag": "True"},
+        {"po_number": "PO-2", "sku": "B", "order_date": "2026-07-02 14:30:00", "quantity": "3700123456789",
+         "unit_price": "0.0000001", "flag": "False", "duration": "1 day, 6:00:00"},
+    ]  # fmt: skip
 
 
 @pytest.mark.parametrize(

@@ -125,25 +125,32 @@ export default async function SkusPage({ searchParams }: { searchParams: Promise
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {skus.map((s) => (
+                {skus.map((s) => {
+                  // One basis per row: the quantity and purchase price of the goods the landed cost is
+                  // over (the containers that carry a charge), what was left out said under the quantity.
+                  const charged = Number(s.charged_quantity ?? 0);
+                  const counted = charged > 0 && s.containers_without_charge > 0;
+                  const leftQty = counted ? Number(s.quantity) - charged : 0;
+                  return (
                   <tr key={s.sku} className="hover:bg-slate-50">
                     <td className="px-5 py-3 max-w-72">
                       <Link href={skuHref(s.sku)} className="font-mono font-medium text-blue-700 hover:underline">{s.sku}</Link>
                       {s.has_estimates ? <span className="ml-2 rounded bg-violet-50 px-1.5 py-0.5 text-[11px] font-medium text-violet-800 ring-1 ring-inset ring-violet-600/20">{t("estimated")}</span> : null}
                       {s.description ? <div className="text-xs text-slate-500 truncate">{s.description}</div> : null}
                       {s.fob_missing ? <FobMissingLine /> : null}
-                      <WithoutChargeLine count={s.containers_without_charge} />
+                      <WithoutChargeLine of={s} />
                     </td>
                     <td className="px-3 py-3 text-right tabular-nums text-slate-600" title={s.last_arrival_on ? t("lastArrival", { date: dateShort(s.last_arrival_on, locale) }) : undefined}>{s.arrivals}</td>
-                    <td className="px-3 py-3 text-right tabular-nums text-slate-600">{qty(s.quantity, locale)}</td>
-                    <td className="px-3 py-3 text-right tabular-nums text-slate-600">{money(s.unit_fob, currency, locale)}</td>
+                    <td className="px-3 py-3 text-right tabular-nums text-slate-600">{qty(counted ? charged : s.quantity, locale)}{leftQty > 0 ? <span className="block text-xs text-slate-500">{t("leftOut", { quantity: qty(leftQty, locale) })}</span> : null}</td>
+                    <td className="px-3 py-3 text-right tabular-nums text-slate-600">{money(counted ? s.unit_charged_fob ?? null : s.unit_fob, currency, locale)}</td>
                     <td className="px-3 py-3 text-right tabular-nums font-medium text-slate-900">{money(s.unit_landed, currency, locale)}</td>
                     <td className="px-3 py-3 text-right tabular-nums text-slate-600">{s.last_unit_landed !== null ? money(s.last_unit_landed, currency, locale) : "—"}</td>
                     <td className="px-3 py-3 text-right"><ChangeBadge value={s.change_pct} locale={locale} /></td>
                     <td className="px-3 py-3 text-right tabular-nums text-slate-600">{s.sale_price !== null ? money(s.sale_price, currency, locale) : <Link href={`${skuHref(s.sku)}#fiche`} className="text-xs text-blue-700 hover:underline">{t("setPrice")}</Link>}</td>
                     <td className={`px-5 py-3 text-right tabular-nums font-medium ${s.margin_pct !== null && Number(s.margin_pct) < 0 ? "text-red-700" : "text-slate-900"}`}>{s.margin_pct !== null ? pct(s.margin_pct, locale) : "—"}</td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

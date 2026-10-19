@@ -14,15 +14,17 @@ from app.core.money import q2
 from app.core.tenancy import TenantDep, TenantSession
 from app.domain.audit.service import record
 from app.domain.costing.service import recompute_org
+from app.domain.fx.orders import PURCHASE_ORDER_UPDATED, TYPED, header, rate_unconfirmed
 from app.domain.models import Container, ContainerLoad, PurchaseOrder, PurchaseOrderLine, Supplier
 from app.domain.products import service as products
 
 router = APIRouter(prefix="/purchase-orders", tags=["purchase-orders"])
 
 
-def _to_response(po: PurchaseOrder) -> schemas.PurchaseOrderResponse:
+def _to_response(t: TenantSession, po: PurchaseOrder) -> schemas.PurchaseOrderResponse:
     out = schemas.PurchaseOrderResponse.model_validate(po)
     out.supplier_name = po.supplier.name if po.supplier else None
+    out.rate_unconfirmed = rate_unconfirmed(po, t.org.base_currency)
     return out
 
 
@@ -39,16 +41,11 @@ def _load_po(t: TenantSession, po_id: UUID) -> PurchaseOrder:
     return po
 
 
-#: An order's header was edited. Its exchange rate above all: it moves every landed cost the order
-#: carries, closed months' drift included, so the log keeps the rate before and after and its source.
-PURCHASE_ORDER_UPDATED = "purchase_order.updated"
-
-
-def _resolve_po_fx(t: TenantSession, fx: FxDep, po: PurchaseOrder, manual: Decimal | None) -> str:
-    """Set the order's rate, and say where it came from (ecb, ecb_latest, manual, same)."""
+def _resolve_po_fx(t: TenantSession, fx: FxDep, po: PurchaseOrder, manual: Decimal | None) -> None:
+    """Set the order's rate, and where it came from (ecb, ecb_latest, manual, same)."""
     if po.currency == t.org.base_currency:
-        po.fx_rate, po.fx_date = Decimal("1"), po.fx_date
-        return "same"
+        po.fx_rate, po.fx_source = Decimal("1"), "same"
+        return
     on_date = po.fx_date or po.order_date
     if on_date is None:
         if manual is None:
@@ -56,21 +53,10 @@ def _resolve_po_fx(t: TenantSession, fx: FxDep, po: PurchaseOrder, manual: Decim
                 "A purchase order in a foreign currency needs fx_date or order_date, or a manual fx_rate",
                 code="FX_DATE_REQUIRED",
             )
-        po.fx_rate = manual
-        return "manual"
+        po.fx_rate, po.fx_source = manual, "manual"
+        return
     resolved = fx.resolve(t.db, t.org.base_currency, po.currency, on_date, manual)
-    po.fx_rate, po.fx_date = resolved.rate, on_date
-    return resolved.source
-
-
-def _header(po: PurchaseOrder) -> dict[str, object]:
-    return {
-        "supplier": po.supplier.name if po.supplier else None,
-        "incoterm": po.incoterm,
-        "order_date": po.order_date,
-        "fx_rate": po.fx_rate,
-        "fx_date": po.fx_date,
-    }
+    po.fx_rate, po.fx_date, po.fx_source = resolved.rate, on_date, resolved.source
 
 
 @router.get("", response_model=list[schemas.PurchaseOrderSummary])
@@ -156,12 +142,12 @@ def create_purchase_order(
     t.db.flush()
     recompute_org(t.db, t.org)
     t.db.commit()
-    return _to_response(_load_po(t, po.id))
+    return _to_response(t, _load_po(t, po.id))
 
 
 @router.get("/{po_id}", response_model=schemas.PurchaseOrderResponse)
 def get_purchase_order(po_id: UUID, t: TenantDep) -> schemas.PurchaseOrderResponse:
-    return _to_response(_load_po(t, po_id))
+    return _to_response(t, _load_po(t, po_id))
 
 
 @router.patch("/{po_id}", response_model=schemas.PurchaseOrderResponse)
@@ -169,9 +155,10 @@ def update_purchase_order(
     po_id: UUID, payload: schemas.PurchaseOrderUpdate, t: TenantDep, fx: FxDep, p: WriterDep
 ) -> schemas.PurchaseOrderResponse:
     po = _load_po(t, po_id)
-    before = _header(po)
+    before = header(po)
     rate_day = po.fx_date or po.order_date
     had_rate = po.fx_rate is not None
+    typed = po.fx_source in TYPED
     changes = payload.model_dump(exclude_unset=True, exclude={"lines", "fx_rate"})
     supplier = (
         t.get_or_404(Supplier, changes["supplier_id"], "Supplier") if changes.get("supplier_id") else None
@@ -180,14 +167,15 @@ def update_purchase_order(
         setattr(po, k, v)
     if "supplier_id" in changes:
         po.supplier = supplier
-    # The rate is looked up again when one is given, when the day it is the rate of has moved, or
-    # when an order without one has a new date. An edit of the order date alone used to replace a
-    # rate typed by hand with the ECB's of the same day, without a word.
+    # The rate is looked up again when one is given, when an order without one has a new date, or
+    # when the day it is the rate of has moved — by its own date only, for a rate a person typed or
+    # the order file gave: an order date added to such an order used to replace it with the ECB's of
+    # that day, or to fail on a currency the ECB does not quote.
     dated = "fx_date" in changes or "order_date" in changes
-    source = None
-    if payload.fx_rate is not None or (po.fx_date or po.order_date) != rate_day or (dated and not had_rate):
+    day_moved = (po.fx_date or po.order_date) != rate_day and (not typed or "fx_date" in changes)
+    if payload.fx_rate is not None or day_moved or (dated and not had_rate):
         try:
-            source = _resolve_po_fx(t, fx, po, payload.fx_rate)
+            _resolve_po_fx(t, fx, po, payload.fx_rate)
         except Unprocessable:
             if payload.fx_rate is not None or had_rate:
                 raise
@@ -220,7 +208,7 @@ def update_purchase_order(
                 if ln_in.sku:
                     known = products.by_sku(t.db, t.org_id, {ln_in.sku})
                     products.fill_blanks(added, known.get(ln_in.sku))
-    after = _header(po)
+    after = header(po)
     moved = [key for key in after if after[key] != before[key]]
     if moved:
         record(
@@ -231,12 +219,12 @@ def update_purchase_order(
             entity_type="purchase_order",
             entity_id=po.id,
             before={key: before[key] for key in moved},
-            after={key: after[key] for key in moved} | ({"fx_source": source} if "fx_rate" in moved else {}),
+            after={key: after[key] for key in moved},
         )
     t.db.flush()
     recompute_org(t.db, t.org)
     t.db.commit()
-    return _to_response(_load_po(t, po.id))
+    return _to_response(t, _load_po(t, po.id))
 
 
 @router.delete("/{po_id}", status_code=status.HTTP_204_NO_CONTENT)

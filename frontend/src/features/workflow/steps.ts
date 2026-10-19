@@ -55,6 +55,18 @@ export function containerWorkflowStep(
     };
   }
 
+  // Charges held by an order with no rate: the next step is that rate, not another invoice.
+  const unrated = report.lines.find((ln) => ln.fob_missing);
+  if (unallocated && unrated && report.warnings.some((w) => w.code === "MISSING_FX_RATE")) {
+    return {
+      descriptionKey: "container.heldByRate",
+      descriptionParams: { all: Number(report.totals.allocated ?? 0) === 0 ? "yes" : "no", order: unrated.po_number },
+      primary: { href: `/purchase-orders/${unrated.po_id}#taux`, labelKey: "container.setRate", labelParams: { order: unrated.po_number } },
+      secondary: [{ href: "#ventilation", labelKey: "container.fixAllocation" }],
+      variant: "warning",
+    };
+  }
+
   if (unallocated) {
     return {
       descriptionKey: "container.unallocated",
@@ -173,17 +185,12 @@ export function invoicesHubStep(review: number, latestReviewId?: string): Workfl
   };
 }
 
-const DEMO_SKU = "TYR-20555R16-91V";
-
-export function reportsHubStep(
-  skus: { sku: string }[],
-  topContainer?: { id: string; number: string },
-): WorkflowStep {
-  const topSku = skus.find((s) => s.sku === DEMO_SKU)?.sku ?? skus[0]?.sku;
+export function reportsHubStep(topContainer?: { id: string; number: string }): WorkflowStep {
   if (topContainer) {
+    // The sentence names no article: the container is not chosen by what it holds, and naming one
+    // it does not carry sent the reader to the wrong goods.
     return {
       descriptionKey: "reports.explore",
-      descriptionParams: { sku: topSku ?? "" },
       primary: {
         href: `/container/${topContainer.id}#couts-unitaires`,
         labelKey: "reports.openContainer",
@@ -340,13 +347,16 @@ export function importNewStep(resuming: boolean): WorkflowStep {
 
 const DONE_HREF: Partial<Record<ImportJobResponse["kind"], string>> = { PRODUCTS: "/imports", CONTAINERS: "/containers", COSTS: "/cost-audit" };
 
+/** What an orders file left to do: its orders still without an exchange rate, and whether any of its lines went into a container. */
+export type OrdersOutcome = { withoutRate: string[]; loaded: boolean };
+
 /**
  * The next-step card for the import wizard itself, computed from the wizard's own client-side step
  * instead of the server-rendered "resuming or not" snapshot the page loaded with: the
  * card used to keep telling you to "choose a file" while you were already on the validation
  * report.
  */
-export function importWizardStep(step: "upload" | "mapping" | "review" | "done", resuming: boolean, hasErrors: boolean, kind: ImportJobResponse["kind"] = "PURCHASE_ORDERS"): WorkflowStep {
+export function importWizardStep(step: "upload" | "mapping" | "review" | "done", resuming: boolean, hasErrors: boolean, kind: ImportJobResponse["kind"] = "PURCHASE_ORDERS", outcome?: OrdersOutcome): WorkflowStep {
   if (step === "mapping") {
     return {
       descriptionKey: "importNew.mapping",
@@ -364,10 +374,23 @@ export function importWizardStep(step: "upload" | "mapping" | "review" | "done",
     };
   }
   if (step === "done") {
+    const first = outcome?.withoutRate[0];
+    if (outcome && first !== undefined) {
+      // An order without a rate has no value, and every charge split by value on its boxes waits for
+      // it: that comes before anything else the file was for.
+      return {
+        descriptionKey: "importNew.doneWithoutRate",
+        descriptionParams: { count: outcome.withoutRate.length, po: first },
+        primary: { href: `/purchase-orders?q=${encodeURIComponent(first)}`, labelKey: "importNew.openOrder", labelParams: { po: first } },
+        secondary: [{ href: "/containers", labelKey: "imports.goContainers" }],
+        variant: "warning",
+      };
+    }
     // What to look at next depends on what the file was: a tariff, a tracking sheet and a costs
-    // ledger have nothing to do with "check your orders are in containers".
+    // ledger have nothing to do with "check your orders are in containers" — nor has a file of orders
+    // that put none of them in a container.
     return {
-      descriptionKey: "importNew.done",
+      descriptionKey: outcome && !outcome.loaded ? "importNew.doneUnloaded" : "importNew.done",
       descriptionParams: { kind },
       primary: { href: DONE_HREF[kind] ?? "/purchase-orders", labelKey: "importNew.doneAction", labelParams: { kind } },
       secondary: kind === "CONTAINERS" ? [] : [{ href: "/containers", labelKey: "imports.goContainers" }],
@@ -416,6 +439,33 @@ export function purchaseOrderDetailStep(
       descriptionKey: "poDetail.notLoaded",
       primary: { href: "/containers", labelKey: "poDetail.loadInContainer" },
       secondary: [{ href: "/purchase-orders", labelKey: "poDetail.backList" }],
+      variant: "warning",
+    };
+  }
+  // With no rate the order has no value, and its container's charges spread on value wait for it:
+  // the rate is the step, entered on this page, whatever was invoiced.
+  if (report.fob_missing) {
+    return {
+      descriptionKey: "poDetail.noRate",
+      descriptionParams: { held: report.warnings.some((w) => w.code === "MISSING_FX_RATE") ? "yes" : "no" },
+      primary: { href: "#taux", labelKey: "poDetail.setRate" },
+      secondary: container
+        ? [{ href: `/container/${container.id}`, labelKey: "poDetail.openContainer", labelParams: { container: container.number } }]
+        : [],
+      variant: "warning",
+    };
+  }
+  // Its container's invoice is on file but held by another order with no rate: that rate is the step,
+  // never a second deposit of the same invoice.
+  const holders = report.held_orders ?? [];
+  if (!hasCosts && (report.containers_held ?? 0) > 0 && holders.length > 0) {
+    return {
+      descriptionKey: "poDetail.heldByOther",
+      descriptionParams: { orderCount: holders.length, orders: holders.join(", ") },
+      primary: { href: `/purchase-orders?q=${encodeURIComponent(holders[0])}`, labelKey: "poDetail.openHolder", labelParams: { order: holders[0] } },
+      secondary: container
+        ? [{ href: `/container/${container.id}`, labelKey: "poDetail.openContainer", labelParams: { container: container.number } }]
+        : [],
       variant: "warning",
     };
   }

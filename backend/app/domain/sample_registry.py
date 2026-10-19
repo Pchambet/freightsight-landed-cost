@@ -25,6 +25,7 @@ from app.domain.models import (
     Container,
     ContainerLoad,
     Cost,
+    CostCredit,
     Document,
     ErpPush,
     EtaHistory,
@@ -139,12 +140,17 @@ def blockers(db: Session, org_id: UUID) -> list[Blocker]:
         name = containers.get(load.container_id) or orders.get(line_order.get(load.po_line_id, load.id), "")
         found.append(Blocker("OWN_LOAD_ON_SAMPLE", name))
 
-    # A cost that came out of an invoice the user uploaded themselves, sitting on a demo object.
-    own_invoice_costs = db.execute(
-        select(Cost)
-        .join(InvoiceLine, InvoiceLine.cost_id == Cost.id)
-        .where(Cost.org_id == org_id, InvoiceLine.invoice_id.not_in(ids["invoice"] or {UUID(int=0)}))
-    ).scalars()
+    # A cost that came out of an invoice the user uploaded themselves, or that a refund line of theirs
+    # names, sitting on a demo object; and a demo cost the user recorded a credit on — the demo makes
+    # none, so every credit is the user's own record, which the cost's deletion would take with it.
+    own_invoices = InvoiceLine.invoice_id.not_in(ids["invoice"] or {UUID(int=0)})
+    from_invoices = (
+        select(Cost.id)
+        .join(InvoiceLine, (InvoiceLine.cost_id == Cost.id) | (InvoiceLine.credit_cost_id == Cost.id))
+        .where(Cost.org_id == org_id, own_invoices)
+    )
+    credited = select(CostCredit.cost_id).where(CostCredit.org_id == org_id)
+    own_invoice_costs = db.scalars(select(Cost).where(Cost.id.in_(from_invoices.union(credited))))
     for cost in own_invoice_costs:
         target = _target_name(cost, containers, orders, line_order, ids)
         if target is not None:

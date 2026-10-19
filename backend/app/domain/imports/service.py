@@ -9,11 +9,12 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import ColumnElement, Numeric, func, select
 
 from app.core.errors import Conflict, Unprocessable
 from app.core.tenancy import TenantSession
 from app.domain.costing.service import recompute_org
+from app.domain.fx.orders import IMPORT
 from app.domain.fx.service import FxService
 from app.domain.imports.fields import REQUIRED_ONE_OF
 from app.domain.imports.parsing import (
@@ -54,6 +55,7 @@ NUMERIC_FIELDS = (
     "line_weight_kg",
     "line_volume_cbm",
     "duty_rate",
+    "fx_rate",
     "line_no",
     "container_quantity",
     "total_value",
@@ -62,12 +64,60 @@ NUMERIC_FIELDS = (
     "credit",
     "sale_price",
 )
+#: How far an order file's rate may stand from the ECB's of the same day: a bank's own rate or a
+#: rate agreed with the supplier sits within a few per cent of it; one a tenth away is a mistake.
+FILE_RATE_TOLERANCE = Decimal("0.10")
 #: Fields an export may state once, on the first row of an order, and leave blank underneath.
 FORWARD_FILLED_FIELDS = ("po_number", "supplier_name", "currency")
-#: A weight or a volume, said for one piece or for the whole order line: (per unit, line total, scale).
+
+
+def _capacity(column: ColumnElement[Any]) -> Decimal:
+    """The first value a column cannot hold: 10^(digits before the point) less half its last decimal,
+    which the database rounds up to it before it checks the digits; 2^31 for an integer."""
+    kind = column.type
+    if isinstance(kind, Numeric):
+        scale = kind.scale or 0
+        return Decimal(10) ** ((kind.precision or 0) - scale) - Decimal(5).scaleb(-scale - 1)
+    return Decimal(2**31)
+
+
+def _step(column: ColumnElement[Any]) -> Decimal:
+    """The smallest step a numeric column keeps: 0.0001 for four decimals."""
+    kind = column.type
+    assert isinstance(kind, Numeric)
+    return Decimal(1).scaleb(-(kind.scale or 0))
+
+
+#: Where each number of a file is written. A value its column cannot hold made the database refuse the
+#: whole file, a 500 on the preview; the row says so instead. A field written to several columns is held
+#: to the narrowest: a product's weight keeps four decimals where an order line's keeps fourteen.
+CAPACITY = {
+    field: min(_capacity(column) for column in columns)
+    for field, columns in {
+        "quantity": (PurchaseOrderLine.__table__.c.quantity,),
+        "unit_price": (PurchaseOrderLine.__table__.c.unit_price,),
+        "unit_weight_kg": (PurchaseOrderLine.__table__.c.unit_weight_kg, Product.__table__.c.unit_weight_kg),
+        "unit_volume_cbm": (
+            PurchaseOrderLine.__table__.c.unit_volume_cbm,
+            Product.__table__.c.unit_volume_cbm,
+        ),
+        "duty_rate": (PurchaseOrderLine.__table__.c.duty_rate, Product.__table__.c.duty_rate),
+        "line_no": (PurchaseOrderLine.__table__.c.line_no,),
+        "container_quantity": (ContainerLoad.__table__.c.quantity,),
+        "total_value": (PurchaseOrderLine.__table__.c.unit_price,),
+        "sale_price": (Product.__table__.c.sale_price,),
+    }.items()
+}
+#: A weight or a volume, said for one piece or for the whole order line: (per unit, line total, the
+#: per-unit column's scale). That scale carries ten more decimals than a line total is read to, so that
+#: the pieces of a line of up to ten billion add back up to its total: 120 kg over 2 000 000 labels is
+#: 0,00006 kg each, not the 0,0001 kg — 200 kg for the line — a four-decimal column kept.
 DIMENSIONS = {
-    "weight": ("unit_weight_kg", "line_weight_kg", Decimal("0.0001")),
-    "volume": ("unit_volume_cbm", "line_volume_cbm", Decimal("0.000001")),
+    dimension: (unit, line, _step(PurchaseOrderLine.__table__.c[unit]))
+    for dimension, unit, line in (
+        ("weight", "unit_weight_kg", "line_weight_kg"),
+        ("volume", "unit_volume_cbm", "line_volume_cbm"),
+    )
 }
 
 
@@ -402,6 +452,9 @@ class _Row:
         except ImportError_ as e:
             self.error(field, e.code, e.message, value=raw)
             return None
+        if v is not None and field in CAPACITY and abs(v) >= CAPACITY[field]:
+            self.error(field, "NUMBER_TOO_LARGE", f"{field} {raw!r} is larger than it can be", value=raw)
+            return None
         if v is not None and positive and v <= 0:
             self.error(field, "NOT_POSITIVE", f"{field} must be > 0, got {v}", value=str(v))
             return None
@@ -573,16 +626,34 @@ def _forward_filled_rows(table: Table, mapping: dict[str, str], report: ImportRe
     return rows
 
 
-def _set_order_rate(t: TenantSession, fx: FxService | None, po: PurchaseOrder, r: _Row) -> None:
-    """Give a foreign-currency order the ECB rate of its date, and say which one was used.
+def _set_order_rate(
+    t: TenantSession, fx: FxService | None, po: PurchaseOrder, r: _Row, given: Decimal | None = None
+) -> None:
+    """Give a foreign-currency order the rate its file gives, else the ECB rate of its date, and say
+    which one was used.
 
     It used to get 1 every time, with a warning: a 40 000 $ order counted as 40 000 €, a FOB about
     15 % too high until somebody noticed, and with it every share allocated by value. The rate of
     the order date (today without one) is what the purchase-order screen applies; the import now
     does the same, and says so with the three things a CFO needs: which rate, of which day, from
     where. When no rate can be had the rate stays missing — never 1 — until a person sets it on the
-    order or a later import finds one; the engine then says the order's value is missing.
+    order, a later import finds one or the provider has it (`fx.orders.resolve_missing`); the engine
+    then says the order's value is missing.
+
+    A rate the file gives is a person's word, for a currency the ECB does not quote or the bank's own
+    rate: it is kept as given, and a later edit of the order's dates does not look it up again.
     """
+    if given is not None:
+        po.fx_rate, po.fx_date, po.fx_source = given, po.order_date, IMPORT
+        r.warn(
+            "fx_rate",
+            "FX_RATE_FROM_FILE",
+            f"PO in {po.currency}: rate {given} from the file applied",
+            currency=po.currency,
+            base_currency=t.org.base_currency,
+            rate=str(given),
+        )
+        return
     on_date = po.order_date or datetime.now(UTC).date()
     resolved = None
     if fx is not None:
@@ -591,7 +662,7 @@ def _set_order_rate(t: TenantSession, fx: FxService | None, po: PurchaseOrder, r
         except Unprocessable:
             resolved = None
     if resolved is None:
-        po.fx_rate, po.fx_date = None, None
+        po.fx_rate, po.fx_date, po.fx_source = None, None, None
         r.warn(
             "currency",
             "FX_RATE_MISSING",
@@ -602,7 +673,7 @@ def _set_order_rate(t: TenantSession, fx: FxService | None, po: PurchaseOrder, r
             rate_date=on_date.isoformat(),
         )
         return
-    po.fx_rate, po.fx_date = resolved.rate, resolved.rate_date
+    po.fx_rate, po.fx_date, po.fx_source = resolved.rate, resolved.rate_date, resolved.source
     r.warn(
         "currency",
         "FX_RATE_APPLIED",
@@ -615,6 +686,40 @@ def _set_order_rate(t: TenantSession, fx: FxService | None, po: PurchaseOrder, r
     )
 
 
+def _file_rate_refused(
+    t: TenantSession, fx: FxService | None, r: _Row, currency: str, given: Decimal, on_date: date
+) -> bool:
+    """Refuse a rate the file gives when the ECB's rate of the day says it cannot be right, with both.
+
+    A French export usually quotes 1 EUR = 1,087 USD, the other way round from the field: taken as
+    given it puts the order's FOB, and every share allocated by value, about 17 % too high, with
+    only a warning to say so. Without an ECB rate to compare (a currency it does not quote, the
+    provider down) the file's rate is kept as given and the warning says where it came from.
+    """
+    if fx is None:
+        return False
+    try:
+        reference = fx.resolve(t.db, t.org.base_currency, currency, on_date)
+    except Unprocessable:
+        return False
+    ecb = reference.rate
+    if abs(given - ecb) <= ecb * FILE_RATE_TOLERANCE:
+        return False
+    inverted = abs(1 - given * ecb) <= given * ecb * FILE_RATE_TOLERANCE
+    r.error(
+        "fx_rate",
+        "FX_RATE_INVERTED" if inverted else "FX_RATE_FAR_FROM_ECB",
+        f"rate {given} for {currency} is {'the inverse of' if inverted else 'far from'} the ECB rate "
+        f"{ecb} of {reference.rate_date.isoformat()}",
+        currency=currency,
+        base_currency=t.org.base_currency,
+        rate=f"{given.normalize():f}",
+        ecb_rate=f"{ecb.normalize():f}",
+        rate_date=reference.rate_date.isoformat(),
+    )
+    return True
+
+
 def _per_unit(r: _Row, dimension: str, quantity: Decimal | None) -> Decimal | None:
     """One piece's weight or volume, as the file says it or divided from the line's total. The order
     line's quantity divides it — the line's, not a container's share of it — at the column's scale."""
@@ -624,7 +729,14 @@ def _per_unit(r: _Row, dimension: str, quantity: Decimal | None) -> Decimal | No
     total = r.decimal(line_total)
     if total is None or quantity is None or quantity <= 0:
         return None
-    return (total / quantity).quantize(scale)
+    per_unit = total / quantity
+    if abs(per_unit) >= CAPACITY[unit]:
+        raw = r.text(line_total)
+        r.error(
+            line_total, "NUMBER_TOO_LARGE", f"{line_total} {raw!r} is more than a piece can be", value=raw
+        )
+        return None
+    return per_unit.quantize(scale)
 
 
 def _apply_purchase_orders(
@@ -646,6 +758,9 @@ def _apply_purchase_orders(
     occurrences: dict[tuple[str, str], int] = {}
     next_line_no: dict[str, int] = {}
     rate_tried: set[str] = set()
+    # The rate the file gives each order, from whichever of its lines gives it first.
+    file_rates: dict[str, Decimal] = {}
+    foreign_orders: dict[str, PurchaseOrder] = {}
     rows = _forward_filled_rows(table, mapping, report)
     for idx, raw in enumerate(rows, start=table.header_row + 1):
         r = _Row(idx, raw, mapping, report, conventions)
@@ -677,6 +792,7 @@ def _apply_purchase_orders(
         volume = _per_unit(r, "volume", quantity)
         duty = r.rate("duty_rate")
         order_date = r.date("order_date")
+        given_rate = r.decimal("fx_rate", positive=True)
         container_number = r.container()
         container_qty = r.decimal("container_quantity", positive=True)
         if r.failed or po_number is None or quantity is None or unit_price is None:
@@ -695,6 +811,12 @@ def _apply_purchase_orders(
                 row_currency=currency,
             )
             continue
+        order_currency = po.currency if po is not None else currency
+        foreign = order_currency != t.org.base_currency
+        if foreign and given_rate is not None and (po is None or given_rate != po.fx_rate):
+            on_date = order_date or (po.order_date if po is not None else None) or datetime.now(UTC).date()
+            if _file_rate_refused(t, fx, r, order_currency, given_rate, on_date):
+                continue
         sku = r.text("sku")
         repeated_line = False
         if line_no_raw is not None:
@@ -765,6 +887,7 @@ def _apply_purchase_orders(
                 occurrences[key] = seen + 1
 
         supplier = _get_or_create_supplier(t, r.text("supplier_name"), report)
+        created = po is None
         if po is None:
             po = t.add(
                 PurchaseOrder(
@@ -772,14 +895,12 @@ def _apply_purchase_orders(
                     supplier_id=supplier.id if supplier else None,
                     currency=currency,
                     fx_rate=Decimal("1"),
+                    fx_source="same",
                     order_date=order_date,
                 )
             )
             t.db.flush()
             report.purchase_orders_created += 1
-            if currency != t.org.base_currency:
-                rate_tried.add(po_number)
-                _set_order_rate(t, fx, po, r)
         else:
             changed = False
             if supplier and po.supplier_id != supplier.id:
@@ -788,10 +909,29 @@ def _apply_purchase_orders(
                 po.order_date, changed = order_date, True
             if changed:
                 report.purchase_orders_updated += 1
-            if po.fx_rate is None and po_number not in rate_tried:
+        if foreign:
+            kept = file_rates.get(po_number)
+            if given_rate is not None and kept is not None and given_rate != kept:
+                r.warn(
+                    "fx_rate",
+                    "FX_RATE_DIFFERS_IN_ORDER",
+                    f"{po_number}: rate {given_rate} differs from {kept} given on an earlier line; "
+                    f"{kept} is kept",
+                    po_number=po_number,
+                    rate=str(given_rate),
+                    kept=str(kept),
+                )
+            elif given_rate is not None and kept is None:
+                # The file's rate, on whichever line of the order it comes: it replaces the one a
+                # lookup gave an earlier line, and the order's own rate when the file states another.
+                file_rates[po_number] = given_rate
+                if created or given_rate != po.fx_rate:
+                    _set_order_rate(t, fx, po, r, given_rate)
+            elif kept is None and po_number not in rate_tried and (created or po.fx_rate is None):
                 # An order left without a rate gets one as soon as a later file finds it.
-                rate_tried.add(po_number)
                 _set_order_rate(t, fx, po, r)
+            rate_tried.add(po_number)
+            foreign_orders[po_number] = po
 
         line = t.db.scalar(
             select(PurchaseOrderLine).where(
@@ -846,6 +986,9 @@ def _apply_purchase_orders(
             if r.failed:
                 continue
         report.valid_rows += 1
+    # Named at the end of the import, so that a person can set them: a rate a later line gave, or a
+    # later file, is no longer missing.
+    report.extra["orders_without_rate"] = sorted(n for n, po in foreign_orders.items() if po.fx_rate is None)
 
 
 def _apply_legacy(
@@ -881,6 +1024,8 @@ def _apply_legacy(
                     po_number=po_number,
                     supplier_id=supplier.id if supplier else None,
                     currency=t.org.base_currency,
+                    fx_rate=Decimal("1"),
+                    fx_source="same",
                 )
             )
             t.db.flush()

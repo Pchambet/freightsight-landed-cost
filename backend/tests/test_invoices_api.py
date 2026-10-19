@@ -432,12 +432,13 @@ def credit_note(client: TestClient, db: Session, org: Organization) -> tuple[str
     return invoice_id, client.get(f"/api/v1/invoices/{invoice_id}").json()["lines"]
 
 
-def test_a_credit_note_is_shown_as_one_and_never_confirmed(
+def test_a_credit_note_is_shown_as_one_and_never_becomes_a_charge(
     client: TestClient, db: Session, org: Organization
 ) -> None:
     """An « AVOIR » of 2 450 € used to be indistinguishable from a bill: positive lines, arithmetic
     holding, confidence untouched. Confirmed, it put a 2 450 € charge where a 2 450 € refund was —
-    an error of 4 900 € on the container, and in the customer's stock valuation at the next push."""
+    an error of 4 900 € on the container, and in the customer's stock valuation at the next push.
+    It now reduces the invoiced cost it corrects (`test_cost_credits.py`); with none, it is refused."""
     invoice_id, lines = credit_note(client, db, org)
     body = client.get(f"/api/v1/invoices/{invoice_id}").json()
     assert body["total_amount"] == "-2940.00"
@@ -448,12 +449,15 @@ def test_a_credit_note_is_shown_as_one_and_never_confirmed(
     client.patch(f"/api/v1/invoices/{invoice_id}/lines/{lines[0]['id']}", json={"accepted": True})
     res = client.post(f"/api/v1/invoices/{invoice_id}/confirm")
     assert res.status_code == 422
-    assert res.json()["code"] == "CREDIT_NOTE_MANUAL"
+    assert res.json()["code"] == "CREDIT_WITHOUT_COST"
     assert client.get("/api/v1/costs").json() == []
 
 
-def test_a_negative_line_cannot_become_a_cost(client: TestClient, db: Session, org: Organization) -> None:
-    """The database refuses a negative cost; the refusal has to arrive before that, by name."""
+def test_a_negative_line_never_becomes_a_negative_cost(
+    client: TestClient, db: Session, org: Organization
+) -> None:
+    """The database refuses a negative cost. A discount with no charge beside it reduces the invoiced
+    cost on file — and with none on file, the refusal arrives before the database's, by name."""
     from app.domain.models import Invoice, InvoiceLine
 
     invoice_id, lines = review(client, db, org)
@@ -467,8 +471,8 @@ def test_a_negative_line_cannot_become_a_cost(client: TestClient, db: Session, o
 
     res = client.post(f"/api/v1/invoices/{invoice_id}/confirm")
     assert res.status_code == 422
-    assert res.json()["code"] == "NEGATIVE_COST_UNSUPPORTED"
-    assert res.json()["errors"][0]["message"] == "@negative_line|-150.00"
+    assert res.json()["code"] == "CREDIT_WITHOUT_COST"
+    assert res.json()["params"]["line"] == "1"
     assert client.get("/api/v1/costs").json() == []
 
 

@@ -6,15 +6,18 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, status
+from sqlalchemy.orm import selectinload
 
 from app.api.v1 import schemas
 from app.api.v1.deps import FxDep, WriterDep
-from app.core.errors import Conflict, Unprocessable
+from app.core.errors import Conflict, NotFound, Unprocessable
 from app.core.money import q2
 from app.core.tenancy import TenantDep, TenantSession
 from app.domain.audit.service import (
     COST_CLOSED,
     COST_CREATED,
+    COST_CREDIT_REMOVED,
+    COST_CREDITED,
     COST_DELETED,
     COST_FIELDS,
     COST_SUPERSEDED,
@@ -22,7 +25,7 @@ from app.domain.audit.service import (
     record,
     snapshot,
 )
-from app.domain.costing import entry
+from app.domain.costing import credits, entry
 from app.domain.costing.service import recompute_org
 from app.domain.invoices.checks import invoice_line_recorded, recorded_note, same_line_on_file
 from app.domain.models import (
@@ -144,6 +147,20 @@ def _supersede(t: TenantSession, cost: Cost, estimate_id: UUID | None, *, status
     cost.supersedes_cost_id = estimate_id
 
 
+def _refuse_under_credits(cost: Cost, *, changing: bool) -> None:
+    """A credited cost's amount is what is left after its credits. Typing over it, changing its
+    currency or type, making it an estimate or deleting it would leave a refund reducing a figure it
+    was never taken off — so the credits are taken back first, each in the history, and the cost
+    changed after."""
+    if cost.credits and changing:
+        raise Unprocessable(
+            "Credits have reduced this cost; take them back before changing its amount, currency, type "
+            "or status, or deleting it",
+            code="COST_HAS_CREDITS",
+            params={"credit_number": cost.credits[0].credit_number or "", "count": str(len(cost.credits))},
+        )
+
+
 @router.get("", response_model=list[schemas.CostResponse])
 def list_costs(
     t: TenantDep,
@@ -169,6 +186,7 @@ def list_costs(
         stmt = stmt.where(Cost.cost_date >= date_from)
     if date_to:
         stmt = stmt.where(Cost.cost_date <= date_to)
+    stmt = stmt.options(selectinload(Cost.credits))
     return list(t.db.scalars(stmt.order_by(Cost.cost_date.desc(), Cost.created_at.desc())))
 
 
@@ -235,6 +253,9 @@ def update_cost(cost_id: UUID, payload: schemas.CostUpdate, t: TenantDep, fx: Fx
     splits = changes.pop("manual_splits", None)
     manual_rate = changes.pop("fx_rate", None)
     supersedes = changes.pop("supersedes_cost_id", _UNSET)
+    keys = ("amount", "currency", "status", "cost_type")
+    moved = [k for k in keys if k in changes and changes[k] != getattr(cost, k)]
+    _refuse_under_credits(cost, changing=bool(moved))
     if supersedes is not _UNSET:
         _supersede(t, cost, supersedes, status=changes.get("status") or cost.status)
     for k, v in changes.items():
@@ -348,6 +369,7 @@ def close_cost(cost_id: UUID, payload: schemas.CostClose, t: TenantDep, p: Write
 def delete_cost(cost_id: UUID, t: TenantDep, p: WriterDep) -> None:
     entry.lock_books(t.db, t.org_id)
     cost = t.get_or_404(Cost, cost_id, "Cost")
+    _refuse_under_credits(cost, changing=True)
     # Recorded before the row is gone: this is the entry someone will look for when a landed cost
     # changes and nobody remembers why.
     record(
@@ -363,3 +385,73 @@ def delete_cost(cost_id: UUID, t: TenantDep, p: WriterDep) -> None:
     t.db.flush()
     recompute_org(t.db, t.org)
     t.db.commit()
+
+
+@router.post("/{cost_id}/credits", response_model=schemas.CostResponse, status_code=status.HTTP_201_CREATED)
+def add_credit(cost_id: UUID, payload: schemas.CostCreditCreate, t: TenantDep, p: WriterDep) -> Cost:
+    """A refund entered by hand: a credit note that came by post, a discount granted on the phone.
+
+    It reduces the cost it is entered on and is kept as its own line — never a cost of its own, and
+    never more than what the cost still amounts to.
+    """
+    entry.lock_books(t.db, t.org_id)
+    cost = t.get_or_404(Cost, cost_id, "Cost")
+    credit = credits.apply(
+        cost,
+        payload.amount,
+        currency=payload.currency or cost.currency,
+        credit_number=payload.credit_number,
+        vendor=payload.vendor or cost.vendor,
+        credit_date=payload.credit_date,
+        created_by=p.user_id,
+    )
+    t.db.flush()
+    before, after = credits.audit_entry(cost, credit, applied=True)
+    record(
+        t.db,
+        t.org_id,
+        actor_user_id=p.user_id,
+        action=COST_CREDITED,
+        entity_type="cost",
+        entity_id=cost.id,
+        before=before,
+        after=after,
+    )
+    recompute_org(t.db, t.org)
+    t.db.commit()
+    t.db.refresh(cost)
+    return cost
+
+
+@router.delete("/{cost_id}/credits/{credit_id}", response_model=schemas.CostResponse)
+def remove_credit(cost_id: UUID, credit_id: UUID, t: TenantDep, p: WriterDep) -> Cost:
+    """Take a credit back: the cost amounts to what it did before it. A credit read from a credit
+    note is taken back by reopening that credit note, which says why on the document itself."""
+    entry.lock_books(t.db, t.org_id)
+    cost = t.get_or_404(Cost, cost_id, "Cost")
+    credit = next((c for c in cost.credits if c.id == credit_id), None)
+    if credit is None:
+        raise NotFound("Credit", code="CREDIT_NOT_FOUND")
+    if credit.invoice_id is not None:
+        raise Unprocessable(
+            "This credit was read from a credit note; reopen the credit note to take it back",
+            code="CREDIT_FROM_INVOICE",
+            params={"invoice_id": str(credit.invoice_id), "credit_number": credit.credit_number or ""},
+        )
+    credits.remove(cost, credit)
+    t.db.flush()
+    before, after = credits.audit_entry(cost, credit, applied=False)
+    record(
+        t.db,
+        t.org_id,
+        actor_user_id=p.user_id,
+        action=COST_CREDIT_REMOVED,
+        entity_type="cost",
+        entity_id=cost.id,
+        before=before,
+        after=after,
+    )
+    recompute_org(t.db, t.org)
+    t.db.commit()
+    t.db.refresh(cost)
+    return cost

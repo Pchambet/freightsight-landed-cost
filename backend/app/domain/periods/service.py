@@ -12,6 +12,11 @@ same rule as every report.
 
 A month holding a line whose order has no exchange rate is not closed: its value, and with it the
 landed cost that would be frozen, is not known (`costing.value`).
+
+A container with goods and no charge at all is in the month's FOB and in its stock value — what its
+goods are booked at, their purchase price — but not in its landed cost nor its coefficient, which
+would only repeat its FOB: the same rule as every report (`charged_containers`). A close freezes which
+containers those were, line by line.
 """
 
 from __future__ import annotations
@@ -30,7 +35,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.core.errors import Conflict, NotFound, Unprocessable
 from app.core.money import q2
 from app.domain.costing.engine import EXCLUDED_FROM_LANDED
-from app.domain.costing.service import Computation, charged_containers
+from app.domain.costing.service import Computation, charged_containers, held_containers, held_orders
 from app.domain.costing.value import coefficient, missing_code, total
 from app.domain.models import (
     AuditLog,
@@ -65,6 +70,11 @@ class LiveLine:
     by_cost_type: dict[str, Decimal]
     estimated: Decimal
     po_id: UUID
+    #: Its container carries no charge at all: `landed` is its stock value, its FOB.
+    without_charge: bool = False
+    #: Of those, its container's charges are entered but held, by these orders' missing rates when
+    #: they are what holds them (`held_containers`). Not frozen: a closed month's lines never had any.
+    held: tuple[str, ...] | None = None
 
 
 @dataclass
@@ -72,7 +82,10 @@ class Summary:
     period: str
     status: str  # open | closed
     containers: int
+    #: Every container's goods, charged or not.
     fob: Decimal | None
+    #: Over the containers that carry a charge, and the value of their goods (`charged_fob`): one with
+    #: none is left out of both, counted in `containers_without_charge`. None when none carries one.
     landed: Decimal | None
     coefficient: Decimal | None
     by_cost_type: dict[str, Decimal]
@@ -91,6 +104,16 @@ class Summary:
     #: Today's lines with no value: `landed` while open, `live_landed` and the drift once closed.
     fob_missing: str | None = None
     fob_missing_lines: int = 0
+    charged_fob: Decimal | None = None
+    containers_without_charge: int = 0
+    containers_held: int = 0
+    held_orders: list[str] = field(default_factory=list)
+    #: What the month's goods stand at, a container with no charge at its FOB: frozen at the close (what
+    #: went into the accounts) and today. The drift is measured on this basis, so on a closed month
+    #: `frozen_stock + drift == live_stock` — `landed` and `live_landed`, over the charged containers
+    #: only, do not add up with the drift as soon as a box with no charge at the close gets one.
+    frozen_stock: Decimal | None = None
+    live_stock: Decimal | None = None
 
 
 @dataclass
@@ -118,6 +141,9 @@ class Readiness:
     invoices_to_review: int
     unallocated_costs: int
     containers_without_cost: int
+    #: Of those, the ones whose charges are entered but held, and the orders holding them.
+    containers_held: int = 0
+    held_orders: list[str] = field(default_factory=list)
     orders_without_fx_rate: list[OrderRef] = field(default_factory=list)
 
 
@@ -185,6 +211,8 @@ def live_lines(comp: Computation) -> dict[str, list[LiveLine]]:
         if cost.status is CostStatus.ESTIMATE:
             estimated[allocation.load_id] += allocation.amount_base
 
+    charged = charged_containers(comp)
+    held = held_containers(comp)
     months: dict[str, list[LiveLine]] = defaultdict(list)
     for load in comp.loads:
         row = comp.load_rows[load.id]
@@ -207,25 +235,64 @@ def live_lines(comp: Computation) -> dict[str, list[LiveLine]]:
                 by_cost_type=by_type,
                 estimated=q2(estimated.get(load.id, ZERO)),
                 po_id=load.po_id,
+                without_charge=row.container_id not in charged,
+                held=held.get(row.container_id),
             )
         )
     return months
 
 
-def _totals(
-    lines: list[LiveLine] | list[FrozenLine],
-) -> tuple[int, Decimal | None, Decimal | None, dict[str, Decimal]]:
+def uncharged_containers(lines: list[LiveLine] | list[FrozenLine]) -> set[UUID]:
+    """The containers of these lines that carry no charge: as the live rule says, or as the close
+    froze it. A line frozen before the close recorded it is read from the charges it froze — a
+    container none of whose lines bore a landed charge had none."""
+    flagged = {line.container_id for line in lines if line.without_charge}
+    unknown = [line for line in lines if line.without_charge is None]
+    charged = {
+        line.container_id
+        for line in unknown
+        if any(Decimal(str(v)) for k, v in line.by_cost_type.items() if k not in EXCLUDED_FROM_LANDED)
+    }
+    return flagged | ({line.container_id for line in unknown} - charged)
+
+
+@dataclass
+class _Figures:
+    containers: int
+    fob: Decimal | None
+    #: What every line stands at, charged or not: the stock value a close freezes.
+    stock: Decimal | None
+    #: Over the containers that carry a charge, and their goods; None when none does.
+    landed: Decimal | None
+    charged_fob: Decimal | None
+    uncharged: int
+    by_type: dict[str, Decimal]
+    held: int = 0
+    held_orders: list[str] = field(default_factory=list)
+
+
+def _totals(lines: list[LiveLine] | list[FrozenLine]) -> _Figures:
     by_type: dict[str, Decimal] = defaultdict(lambda: ZERO)
     for line in lines:
         for cost_type, amount in line.by_cost_type.items():
             by_type[cost_type] += Decimal(str(amount))
+    uncharged = uncharged_containers(lines)
+    charged = [line for line in lines if line.container_id not in uncharged]
+    held = [line for line in lines if isinstance(line, LiveLine) and line.held is not None]
     fob = total(line.fob for line in lines)
-    landed = total(line.landed for line in lines)
-    return (
-        len({line.container_id for line in lines}),
-        None if fob is None else q2(fob),
-        None if landed is None else q2(landed),
-        dict(sorted(by_type.items())),
+    stock = total(line.landed for line in lines)
+    landed = total(line.landed for line in charged) if charged or not lines else None
+    charged_fob = total(line.fob for line in charged) if charged or not lines else None
+    return _Figures(
+        containers=len({line.container_id for line in lines}),
+        fob=None if fob is None else q2(fob),
+        stock=None if stock is None else q2(stock),
+        landed=None if landed is None or charged_fob is None else q2(landed),
+        charged_fob=None if landed is None or charged_fob is None else q2(charged_fob),
+        uncharged=len(uncharged),
+        by_type=dict(sorted(by_type.items())),
+        held=len({line.container_id for line in held}),
+        held_orders=sorted({order for line in held for order in line.held or ()}),
     )
 
 
@@ -258,34 +325,42 @@ def _summary(
     close: PeriodClose | None,
 ) -> Summary:
     missing = _missing(live)
+    today = _totals(live)
     if close is None:
-        containers, fob, landed, by_type = _totals(live)
         return Summary(
             period,
             "open",
-            containers,
-            fob,
-            landed,
-            coefficient(landed, fob),
-            by_type,
-            live_landed=landed,
+            today.containers,
+            today.fob,
+            today.landed,
+            coefficient(today.landed, today.charged_fob),
+            today.by_type,
+            live_landed=today.landed,
             fob_missing=missing_code(missing),
             fob_missing_lines=missing,
+            charged_fob=today.charged_fob,
+            containers_without_charge=today.uncharged,
+            containers_held=today.held,
+            held_orders=today.held_orders,
+            live_stock=today.stock,
         )
     # The drift of the list is the sum of the drift lines of the detail: the two cannot disagree.
     moved = _drift(db, comp, org, close, live)
     drift = total(line.difference for line in moved)
+    # The frozen figures, read again from the frozen lines: the close kept their stock value, and
+    # which of their containers carried no charge.
+    frozen = _totals(close.lines)
     return Summary(
         period,
         "closed",
         close.containers,
         close.fob,
-        close.landed,
-        coefficient(close.landed, close.fob),
+        frozen.landed,
+        coefficient(frozen.landed, frozen.charged_fob),
         {k: Decimal(str(v)) for k, v in close.by_cost_type.items()},
         closed_at=close.closed_at,
         closed_by_name=_name(db, close.closed_by),
-        live_landed=_totals(live)[2],
+        live_landed=today.landed,
         drift=None if drift is None else q2(drift),
         drift_containers=len(moved),
         drift_acknowledged=close.acknowledged_drift,
@@ -294,6 +369,10 @@ def _summary(
         acknowledged_note=close.acknowledged_note,
         fob_missing=missing_code(missing),
         fob_missing_lines=missing,
+        charged_fob=frozen.charged_fob,
+        containers_without_charge=frozen.uncharged,
+        frozen_stock=close.landed,
+        live_stock=today.stock,
     )
 
 
@@ -367,6 +446,7 @@ def _readiness(db: Session, comp: Computation, org: Organization, live: list[Liv
             box.estimated += line.estimated
     in_month = {line.container_id for line in live}
     costed = charged_containers(comp)
+    held = held_containers(comp)
     to_review = db.scalars(
         select(Invoice.id).where(Invoice.org_id == org.id, Invoice.status == InvoiceStatus.NEEDS_REVIEW)
     )
@@ -376,6 +456,8 @@ def _readiness(db: Session, comp: Computation, org: Organization, live: list[Liv
         invoices_to_review=len(list(to_review)),
         unallocated_costs=len(comp.result.unallocated),
         containers_without_cost=len(in_month - costed),
+        containers_held=len(in_month & held.keys()),
+        held_orders=held_orders(held, in_month),
         orders_without_fx_rate=orders_without_fx_rate(comp, live),
     )
 
@@ -473,18 +555,19 @@ def close_period(
     live = live_lines(comp).get(period, [])
     if not live:
         raise Unprocessable("No container arrived in this month", code="PERIOD_EMPTY")
-    _refuse_unknown_value(comp, live)
-    containers, fob, landed, by_type = _totals(live)
-    assert fob is not None and landed is not None  # refused above otherwise
+    _refuse_unknown_value(comp, live, "PERIOD_ORDERS_WITHOUT_FX_RATE")
+    figures = _totals(live)
+    assert figures.fob is not None and figures.stock is not None  # refused above otherwise
     close = PeriodClose(
         org_id=org.id,
         period=period,
         closed_by=closed_by,
         base_currency=org.base_currency,
-        containers=containers,
-        fob=fob,
-        landed=landed,
-        by_cost_type={k: f"{v:.2f}" for k, v in by_type.items()},
+        containers=figures.containers,
+        fob=figures.fob,
+        # What the goods are booked at: a container with no charge at its FOB.
+        landed=figures.stock,
+        by_cost_type={k: f"{v:.2f}" for k, v in figures.by_type.items()},
     )
     for line in live:
         assert line.fob is not None and line.landed is not None
@@ -502,6 +585,7 @@ def close_period(
                 fob=line.fob,
                 landed=line.landed,
                 by_cost_type={k: f"{v:.2f}" for k, v in line.by_cost_type.items()},
+                without_charge=line.without_charge,
             )
         )
     for pending in accruals_at(comp, period):
@@ -528,14 +612,15 @@ def close_period(
     return close
 
 
-def _refuse_unknown_value(comp: Computation, live: list[LiveLine]) -> None:
+def _refuse_unknown_value(comp: Computation, live: list[LiveLine], code: str) -> None:
     """A close freezes a figure for good, and a booked drift is an entry: neither is made on a value
-    nobody knows. The orders are named, so the person knows where to set their rate."""
+    nobody knows. The orders are named, so the person knows where to set their rate; each refusal has
+    its own code, since a closed month is not refused a close."""
     orders = orders_without_fx_rate(comp, live)
     if orders:
         raise Unprocessable(
             "Orders in this month have no exchange rate",
-            code="PERIOD_ORDERS_WITHOUT_FX_RATE",
+            code=code,
             params={"orders": ", ".join(order.po_number for order in orders)},
         )
 
@@ -549,7 +634,7 @@ def acknowledge_drift(
     if close is None:
         raise NotFound("Closed period", code="PERIOD_NOT_CLOSED")
     live = live_lines(comp).get(period, [])
-    _refuse_unknown_value(comp, live)
+    _refuse_unknown_value(comp, live, "PERIOD_DRIFT_ORDERS_WITHOUT_FX_RATE")
     moved = _drift(db, comp, org, close, live)
     close.acknowledged_drift = q2(sum((line.difference or ZERO for line in moved), ZERO))
     close.acknowledged_at = datetime.now(UTC)

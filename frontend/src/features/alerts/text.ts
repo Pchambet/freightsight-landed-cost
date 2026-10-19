@@ -41,7 +41,8 @@ export function alertText(a: Alert, t: T, risk: (code: string) => string, locale
           title = t(`text.DND_RISK.${key}${suffix}`, { container, amount: amount ?? "" });
         } else {
           const key = detention ? "titleDetention" : "title";
-          title = t(`text.DND_RISK.${key}`, { container, risk: risk(code) });
+          // Lower-case mid-sentence, as the e-mail of the same alert writes it (alerts/text.py).
+          title = t(`text.DND_RISK.${key}`, { container, risk: risk(code).toLocaleLowerCase(locale) });
         }
         if (!when) return { title, body: t("text.DND_RISK.bodyNoLfd") };
         const printed = { [dateKey]: dateShort(when, locale) };

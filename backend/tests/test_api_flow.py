@@ -143,7 +143,10 @@ def test_t5_through_the_api(client: TestClient) -> None:
         "allocated": "2766.67",
         "vat": "0.00",
         "landed": "18766.67",
+        "charged_fob": "16000.00",
         "unallocated": "0.00",
+        "unallocated_actual": "0.00",
+        "invoiced": "2766.67",
     }
     by_po = {ln["po_number"]: ln for ln in cnt1["lines"]}
     assert by_po["PO-A"]["allocated"] == "912.50" and by_po["PO-A"]["unit_landed_cost"] == "11.5208"

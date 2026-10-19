@@ -12,7 +12,7 @@ import StatTile, { type Delta } from "@/components/ui/StatTile";
 import LoadSampleDataButton from "@/features/containers/LoadSampleDataButton";
 import RankBars, { type RankRow } from "@/features/overview/RankBars";
 import FobMissing, { FobMissingLine } from "@/features/report/FobMissing";
-import WithoutCharge, { WithoutChargeLine } from "@/features/report/WithoutCharge";
+import WithoutCharge, { WithoutChargeLine, heldParams, heldRate, leftOutText } from "@/features/report/WithoutCharge";
 import { WINDOWS, monthLabel, monthTitle, windows, type WindowMonths } from "@/features/overview/period";
 import { skuHref } from "@/features/skus/href";
 import { api } from "@/lib/api/client";
@@ -57,11 +57,15 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
   const fob = o.current.fob === null ? null : num(o.current.fob);
   const chargedFob = o.current.charged_fob === null ? null : num(o.current.charged_fob);
   const bare = o.current.containers_without_charge;
+  const leftOut = leftOutText(tw, o.current);
   const estimated = num(o.current.estimated);
   const fees = Object.entries(o.by_cost_type ?? {}).reduce((sum, [type, amount]) => (type === "IMPORT_VAT" ? sum : sum + num(amount as string)), 0);
   const coef = o.current.coefficient !== null ? num(o.current.coefficient) : null;
   const coefBefore = o.previous.coefficient !== null ? num(o.previous.coefficient) : null;
   const unvalued = o.current.fob_missing_lines ?? 0;
+  // Where a missing rate is entered: the order itself when there is one, never the whole list.
+  const unrated = o.current.orders_without_fx_rate ?? [];
+  const rateHref = unrated.length === 1 ? `/purchase-orders/${unrated[0].id}#taux` : "/purchase-orders";
   const hasData = (fob ?? 0) > 0 || fees > 0 || unvalued > 0;
 
   const familyLabels = Object.fromEntries(COST_FAMILIES.map((f) => [f, tf(f)])) as Record<CostFamily, string>;
@@ -107,7 +111,7 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
       label: b.key === "unknown" ? t("unknownSupplier") : b.label,
       value: b.coefficient === null ? 0 : (num(b.allocated) / num(b.charged_fob)) * 100,
       display: ratioOf(b.coefficient),
-      sub: b.charged_fob === null && b.fob_missing ? tm("line") : b.charged_fob === null ? tw("count", { count: b.containers_without_charge }) : t("supplierSub", { fees: money(b.allocated, currency, locale), fob: money(b.charged_fob, currency, locale) }),
+      sub: b.charged_fob === null && b.fob_missing ? tm("line") : b.charged_fob === null ? (leftOutText(tw, b) ?? undefined) : t("supplierSub", { fees: money(b.allocated, currency, locale), fob: money(b.charged_fob, currency, locale) }),
       href: `/reports?group_by=supplier&from=${current.from}&to=${current.to}`,
     }))
     .sort((x, y) => y.value - x.value)
@@ -117,15 +121,22 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
 
   // What needs a human today, most urgent first. Independent of the period shown.
   const atRisk = [...(o.at_risk ?? [])].sort((x, y) => (x.last_free_day ?? "9999").localeCompare(y.last_free_day ?? "9999"));
-  const todoRows: { key: string; icon: "review" | "failed" | "estimates" | "uncosted" | "unloaded"; count: number; href: string }[] = [
+  // A held box is named with the order whose rate releases it, and the action is that rate.
+  const heldBoxes = o.todo.held_containers ?? [];
+  const heldOrders = o.todo.held_orders ?? [];
+  const heldParamsTodo = { containers: heldBoxes.join(", "), ...heldParams(heldOrders.map((h) => h.po_number)) };
+  const heldHref = heldOrders.length === 1 ? `/purchase-orders/${heldOrders[0].id}#taux` : heldBoxes.length === 1 ? `/containers?view=all&q=${encodeURIComponent(heldBoxes[0])}` : "/containers?view=all";
+  const todoRows: { key: string; icon: "review" | "failed" | "estimates" | "uncosted" | "held" | "unloaded"; count: number; href: string; params?: Record<string, string | number>; action?: string }[] = [
     { key: "review", icon: "review" as const, count: o.todo.invoices_to_review, href: "/invoices" },
     { key: "failed", icon: "failed" as const, count: o.todo.invoices_failed, href: "/invoices" },
     { key: "estimates", icon: "estimates" as const, count: o.todo.estimates_awaiting_invoice, href: "/reports/variance" },
-    { key: "uncosted", icon: "uncosted" as const, count: o.todo.containers_without_cost, href: "/containers" },
+    // A box whose charges are on file but held is not one "with no cost": its invoice must not be asked for again.
+    { key: "uncosted", icon: "uncosted" as const, count: o.todo.containers_without_cost - (o.todo.containers_held ?? 0), href: "/containers?view=nocost" },
+    { key: "held", icon: "held" as const, count: o.todo.containers_held ?? 0, href: heldHref, params: heldParamsTodo, action: heldOrders.length === 1 ? "heldRateAction" : undefined },
     { key: "unloaded", icon: "unloaded" as const, count: o.todo.containers_without_loads, href: "/containers" },
   ].filter((r) => r.count > 0);
   const todo = atRisk.length + todoRows.length;
-  const TODO_ICON = { review: Receipt, failed: FileWarning, estimates: Hourglass, uncosted: FileText, unloaded: PackageOpen };
+  const TODO_ICON = { review: Receipt, failed: FileWarning, estimates: Hourglass, uncosted: FileText, held: AlertTriangle, unloaded: PackageOpen };
   const hasContainers = o.current.containers + o.previous.containers + o.todo.containers_without_cost + o.todo.containers_without_loads + atRisk.length > 0;
 
   const paid = num(o.current.demurrage_paid);
@@ -200,8 +211,8 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
               return (
                 <li key={r.key} className="py-2.5 flex items-center gap-3 text-sm">
                   <Icon className={`w-4 h-4 shrink-0 ${r.key === "failed" ? "text-red-600" : r.key === "review" ? "text-blue-600" : "text-slate-500"}`} aria-hidden />
-                  <span className="min-w-0 flex-1 text-slate-600">{t(`todo.${r.key}`, { count: r.count })}</span>
-                  <Link href={r.href} className="shrink-0 inline-flex items-center gap-1 text-blue-700 hover:underline">{t(`todo.${r.key}Action`)}<ArrowRight className="w-3.5 h-3.5" aria-hidden /></Link>
+                  <span className="min-w-0 flex-1 text-slate-600">{t(`todo.${r.key}` as never, { count: r.count, ...r.params } as never)}</span>
+                  <Link href={r.href} className="shrink-0 inline-flex items-center gap-1 text-blue-700 hover:underline">{t(`todo.${r.action ?? `${r.key}Action`}` as never)}<ArrowRight className="w-3.5 h-3.5" aria-hidden /></Link>
                 </li>
               );
             })}
@@ -257,7 +268,7 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
               label={t("kpi.coef")}
               hint={t("kpi.coefHint")}
               value={coef !== null ? ratio(coef) : "—"}
-              sub={coef !== null ? t("kpi.coefSub", { pct: pct((coef - 1) * 100, locale) }) : unvalued > 0 ? tm("line") : bare > 0 ? tw("count", { count: bare }) : undefined}
+              sub={coef !== null ? t("kpi.coefSub", { pct: pct((coef - 1) * 100, locale) }) : unvalued > 0 ? tm("line") : (leftOut ?? undefined)}
               delta={comparable && coef !== null && coefBefore !== null ? { text: signed(coef - coefBefore, 2), direction: Math.abs(coef - coefBefore) < 0.005 ? "flat" : coef > coefBefore ? "up" : "down", good: coef <= coefBefore, versus } : null}
               spark={coefSpark}
             />
@@ -267,7 +278,9 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
               value={money(fees, currency, locale)}
               sub={
                 <>
-                  {t("kpi.feesSub", { fob: money(fob, currency, locale), containers: o.current.containers })}
+                  {/* Over the same goods as the coefficient beside it and the bar below: the containers that carry a charge. */}
+                  {t("kpi.feesSub", { fob: money(bare > 0 ? chargedFob : fob, currency, locale), containers: o.current.containers - bare })}
+                  {bare > 0 ? <span className="block">{t("kpi.feesLeftOut", { count: bare, fob: money(o.current.uncharged_fob ?? null, currency, locale), missing: o.current.uncharged_fob_missing_lines ?? 0 })}</span> : null}
                   {estimated > 0 ? <span className="block font-medium text-violet-800">{t("kpi.feesEstimated", { amount: money(estimated, currency, locale) })}</span> : null}
                 </>
               }
@@ -291,8 +304,9 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
               href="/reports#dnd"
             />
           </div>
-          <FobMissing lines={unvalued} className="-mt-3 mb-6" />
-          <WithoutCharge containers={bare} className="-mt-3 mb-6" />
+          <FobMissing lines={unvalued} href={rateHref} className="-mt-3 mb-6" />
+          {/* Every figure of this page is over the containers that carry a charge, the goods' value included. */}
+          <WithoutCharge of={o.current} rate={heldRate(o.current, unrated)} currency={currency} className="-mt-3 mb-6" />
 
           <div className="grid gap-6 xl:grid-cols-3 mb-6 items-start">
             <Panel
@@ -307,7 +321,7 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
 
             <Panel title={t("breakdown.title")} subtitle={t("breakdown.subtitle", { landed: money(o.current.landed, currency, locale) })}>
               {chargedFob === null ? (
-                unvalued > 0 ? <FobMissing lines={unvalued} /> : <WithoutCharge containers={bare} href={null} />
+                unvalued > 0 ? <FobMissing lines={unvalued} /> : <WithoutCharge of={o.current} href={null} />
               ) : (
                 <BreakdownBar fob={chargedFob} families={foldFamilies(o.by_cost_type as Record<string, string> | undefined)} currency={currency} locale={locale} fobLabel={t("breakdown.fob")} familyLabels={familyLabels} ofFobLabel={t("breakdown.ofFob")} dense />
               )}
@@ -336,17 +350,22 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {skus.map((s) => {
-                        const q = num(s.quantity);
+                        // One basis per row: the quantity and purchase price of the goods the landed
+                        // cost is over, with what was left out said under the quantity.
+                        const charged = num(s.charged_quantity);
+                        const q = charged > 0 ? charged : num(s.quantity);
+                        const unitFob = charged > 0 ? s.unit_charged_fob ?? null : q > 0 && s.fob !== null ? num(s.fob) / q : null;
+                        const leftQty = charged > 0 ? num(s.quantity) - charged : 0;
                         return (
                           <tr key={s.sku} className="hover:bg-slate-50">
                             <td className="px-5 py-2.5">
                               <Link href={skuHref(s.sku)} className="font-mono text-blue-700 hover:underline">{s.sku}</Link>
                               {num(s.estimated) > 0 ? <span className="ml-2 rounded bg-violet-50 px-1.5 py-0.5 text-[11px] font-medium text-violet-800 ring-1 ring-inset ring-violet-600/20">{t("skus.estimated")}</span> : null}
                               {s.fob === null ? <FobMissingLine /> : null}
-                              <WithoutChargeLine count={s.containers_without_charge} />
+                              <WithoutChargeLine of={s} />
                             </td>
-                            <td className="px-3 py-2.5 text-right tabular-nums text-slate-600">{qty(s.quantity, locale)}</td>
-                            <td className="px-3 py-2.5 text-right tabular-nums text-slate-600">{q > 0 && s.fob !== null ? money(num(s.fob) / q, currency, locale) : "—"}</td>
+                            <td className="px-3 py-2.5 text-right tabular-nums text-slate-600">{qty(q, locale)}{leftQty > 0 ? <span className="block text-xs text-slate-500">{t("skus.leftOut", { quantity: qty(leftQty, locale) })}</span> : null}</td>
+                            <td className="px-3 py-2.5 text-right tabular-nums text-slate-600">{unitFob === null ? "—" : money(unitFob, currency, locale)}</td>
                             <td className="px-3 py-2.5 text-right tabular-nums font-medium text-slate-900">{money(s.unit_landed_cost, currency, locale)}</td>
                             <td className="px-5 py-2.5 text-right tabular-nums text-slate-600">{ratioOf(s.coefficient)}</td>
                           </tr>

@@ -111,8 +111,11 @@ export default function AllocationPanel({ containerId, poId, report }: { contain
                   <td className={td}>
                     <div className="font-medium">{ln.po_number} <span className="text-slate-500 font-normal">#{ln.line_no}</span></div>
                     <div className="text-xs text-slate-500">{[ln.sku, ln.description].filter(Boolean).join(" · ") || "—"}</div>
-                    {ln.fob_missing ? <FobMissingLine href={`/purchase-orders/${ln.po_id}#taux`} /> : null}
-                    {ln.without_charge ? <WithoutChargeLine /> : null}
+                    {/* The reasons wrap: on a phone a nowrap sentence ran off the scrolled table. */}
+                    <div className="whitespace-normal max-w-64 sm:max-w-md">
+                      {ln.fob_missing ? <FobMissingLine href={`/purchase-orders/${ln.po_id}#taux`} /> : null}
+                      <WithoutChargeLine box={ln} />
+                    </div>
                   </td>
                   {poId ? <td className={`${td} font-mono text-xs text-slate-600`}>{ln.container_number}</td> : null}
                   <td className={tdRight}>{qty(ln.quantity, locale)}</td>
@@ -132,7 +135,7 @@ export default function AllocationPanel({ containerId, poId, report }: { contain
               <tr>
                 <td className={td} colSpan={poId ? 3 : 2}>{tr("total")}</td>
                 <td className={tdRight}><Money amount={shown.totals.fob} currency={cur} /></td>
-                <td className={tdRight}>{bare ? <span className="text-slate-400">—</span> : <Money amount={shown.totals.landed} currency={cur} />}</td>
+                <td className={tdRight}>{bare ? <span className="text-slate-400">—</span> : <><Money amount={shown.totals.landed} currency={cur} /><WithoutChargeLine of={shown} /></>}</td>
                 <td className={tdRight}></td>
                 {chargeCostTypes.map((ct) => <td key={ct} className={tdRight}><Money amount={shown.by_cost_type[ct]} currency={cur} /></td>)}
                 {hasVat ? <td className={`${tdRight} text-slate-500`}><Money amount={shown.by_cost_type.IMPORT_VAT} currency={cur} /></td> : null}

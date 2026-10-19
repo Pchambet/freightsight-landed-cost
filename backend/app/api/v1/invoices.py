@@ -20,6 +20,8 @@ from app.api.v1.deps import FxDep, WriterDep
 from app.core.errors import Conflict, NotFound, Unprocessable
 from app.core.tenancy import TenantDep, TenantSession
 from app.domain.audit.service import (
+    COST_CREDIT_REMOVED,
+    COST_CREDITED,
     INVOICE_CONFIRMED,
     INVOICE_CORRECTED,
     INVOICE_REJECTED,
@@ -27,10 +29,11 @@ from app.domain.audit.service import (
     record,
 )
 from app.domain.costing import entry
+from app.domain.costing.credits import audit_entry, creditable
 from app.domain.documents.registry import get_store
 from app.domain.invoices.service import confirm as confirm_invoice
-from app.domain.invoices.service import create_invoice, reopen_confirmed
-from app.domain.models import Container, Cost, Invoice, InvoiceLine, InvoiceStatus
+from app.domain.invoices.service import create_invoice, is_credit_note, reopen_confirmed, would_refund
+from app.domain.models import Container, Cost, CostScope, CostType, Invoice, InvoiceLine, InvoiceStatus
 from app.jobs.app import defer
 
 router = APIRouter(prefix="/invoices", tags=["invoices"])
@@ -75,12 +78,28 @@ def _containers_from_costs(db: Session, costs: list[Cost]) -> list[schemas.Invoi
     return [schemas.InvoiceContainerLink(id=row.id, container_number=row.container_number) for row in rows]
 
 
-def _response(invoice: Invoice) -> schemas.InvoiceResponse:
+def _response(db: Session, invoice: Invoice) -> schemas.InvoiceResponse:
     summary = schemas.InvoiceSummary.model_validate(invoice).model_dump()
     summary["filename"] = invoice.document.filename if invoice.document else None
+    confirmed = invoice.status is InvoiceStatus.CONFIRMED
+    # Once confirmed, a refund is a line that reduced a cost; before, one that would as things stand.
+    refunding = set() if confirmed else would_refund(invoice)
+    candidates: dict[tuple[CostScope, UUID, CostType], list[schemas.CreditCandidate]] = {}
+    lines = []
+    for ln in invoice.lines:
+        line = schemas.InvoiceLineResponse.model_validate(ln)
+        line.refund = ln.credit_cost_id is not None if confirmed else ln.id in refunding
+        if ln.id in refunding and ln.scope and ln.target_id and ln.cost_type:
+            key = (ln.scope, ln.target_id, ln.cost_type)
+            if key not in candidates:
+                found = creditable(db, invoice.org_id, *key)
+                candidates[key] = [schemas.CreditCandidate.model_validate(cost) for cost in found]
+            line.credit_candidates = candidates[key]
+        lines.append(line)
     return schemas.InvoiceResponse(
         **summary,
-        lines=[schemas.InvoiceLineResponse.model_validate(ln) for ln in invoice.lines],
+        credit_note=is_credit_note(invoice),
+        lines=lines,
         # The route, not a storage URL: the bytes always come back through this API.
         document_url=f"/api/v1/invoices/{invoice.id}/document",
         notes=list(invoice.raw.get("notes", [])) if isinstance(invoice.raw, dict) else [],
@@ -125,7 +144,7 @@ async def upload_invoice(
     )
     t.db.commit()
     t.db.refresh(invoice)
-    return _response(invoice)
+    return _response(t.db, invoice)
 
 
 @router.get("", response_model=list[schemas.InvoiceSummary])
@@ -143,7 +162,7 @@ def list_invoices(t: TenantDep, invoice_status: InvoiceStatus | None = None) -> 
 
 @router.get("/{invoice_id}", response_model=schemas.InvoiceResponse)
 def get_invoice(invoice_id: UUID, t: TenantDep) -> schemas.InvoiceResponse:
-    return _response(_get(t, invoice_id))
+    return _response(t.db, _get(t, invoice_id))
 
 
 @router.patch("/{invoice_id}", response_model=schemas.InvoiceResponse)
@@ -179,7 +198,7 @@ def correct_invoice(
     )
     t.db.commit()
     t.db.refresh(invoice)
-    return _response(invoice)
+    return _response(t.db, invoice)
 
 
 @router.get("/{invoice_id}/document")
@@ -199,6 +218,27 @@ def get_invoice_document(invoice_id: UUID, t: TenantDep) -> Response:
     )
 
 
+def _decide(t: TenantSession, line: InvoiceLine, changes: dict[str, object]) -> None:
+    """Apply a person's correction to a line. The cost a refund was said to reduce was chosen for its
+    type, target and currency: when one of them changes, so does the question."""
+    named = changes.get("credit_cost_id")
+    # A cost deleted since the screen listed it, or one that is not ours: refused by name here, not by
+    # the foreign key as a server error (which would also say that another organization's id exists).
+    on_file = select(Cost.id).where(Cost.id == named, Cost.org_id == t.org_id)
+    if named is not None and t.db.scalar(on_file) is None:
+        raise Unprocessable(
+            f"The cost named on line {line.line_no} is not on file",
+            code="CREDIT_COST_MISMATCH",
+            params={"line": str(line.line_no)},
+        )
+    keys = ("cost_type", "scope", "target_id", "currency")
+    moved = any(getattr(line, k) != changes[k] for k in keys if k in changes)
+    for field, value in changes.items():
+        setattr(line, field, value)
+    if moved and "credit_cost_id" not in changes:
+        line.credit_cost_id = None
+
+
 @router.patch("/{invoice_id}/lines/{line_id}", response_model=schemas.InvoiceResponse)
 def update_line(
     invoice_id: UUID,
@@ -214,12 +254,11 @@ def update_line(
     line = next((ln for ln in invoice.lines if ln.id == line_id), None)
     if line is None:
         raise NotFound("Invoice line")
-    for field, value in payload.model_dump(exclude_unset=True).items():
-        setattr(line, field, value)
+    _decide(t, line, payload.model_dump(exclude_unset=True))
     t.db.flush()
     t.db.commit()
     t.db.refresh(invoice)
-    return _response(invoice)
+    return _response(t.db, invoice)
 
 
 @router.patch("/{invoice_id}/lines", response_model=schemas.InvoiceResponse)
@@ -258,11 +297,10 @@ def update_lines(
         )
     for decision in payload.lines:
         line = by_id[decision.id]
-        for field, value in decision.model_dump(exclude_unset=True, exclude={"id"}).items():
-            setattr(line, field, value)
+        _decide(t, line, decision.model_dump(exclude_unset=True, exclude={"id"}))
     t.db.commit()
     t.db.refresh(invoice)
-    return _response(invoice)
+    return _response(t.db, invoice)
 
 
 @router.post(
@@ -304,7 +342,7 @@ def add_line(
     t.db.flush()
     t.db.commit()
     t.db.refresh(invoice)
-    return _response(invoice)
+    return _response(t.db, invoice)
 
 
 @router.post("/{invoice_id}/confirm", response_model=schemas.InvoiceConfirmResponse)
@@ -337,6 +375,18 @@ def confirm(
         # behind, not even for the rest of this session.
         t.db.rollback()
         raise
+    for credit in result.credits:
+        before, after = audit_entry(credit.cost, credit, applied=True)
+        record(
+            t.db,
+            t.org_id,
+            actor_user_id=p.user_id,
+            action=COST_CREDITED,
+            entity_type="cost",
+            entity_id=credit.cost_id,
+            before=before,
+            after=after,
+        )
     record(
         t.db,
         t.org_id,
@@ -348,6 +398,7 @@ def confirm(
             "invoice_number": invoice.invoice_number,
             "vendor": invoice.vendor,
             "cost_ids": [c.id for c in result.costs],
+            "credit_ids": [c.id for c in result.credits],
             "total_amount": invoice.total_amount,
             # what a person overruled to confirm it, if anything: a duplicate, an invoice on record
             "notes": [
@@ -357,13 +408,16 @@ def confirm(
     )
     t.db.commit()
     t.db.refresh(invoice)
+    credited = [credit.cost for credit in result.credits]
     return schemas.InvoiceConfirmResponse(
-        invoice=_response(invoice),
+        invoice=_response(t.db, invoice),
         costs_created=len(result.costs),
         cost_ids=[c.id for c in result.costs],
-        containers=_containers_from_costs(t.db, result.costs),
+        containers=_containers_from_costs(t.db, result.costs + credited),
         superseded_estimate_ids=result.superseded,
         notes=result.notes,
+        credits_created=len(result.credits),
+        credited_cost_ids=[cost.id for cost in credited],
     )
 
 
@@ -392,12 +446,25 @@ def reopen(invoice_id: UUID, t: TenantDep, p: WriterDep) -> schemas.InvoiceRespo
     removed: list[UUID] = []
     if invoice.status is InvoiceStatus.CONFIRMED:
         try:
-            removed = reopen_confirmed(t.db, t.org, invoice)
+            reopening = reopen_confirmed(t.db, t.org, invoice)
         except Exception:
             # Same all-or-nothing as the confirmation it undoes: a refusal leaves every cost where
             # it was, not a half-emptied invoice.
             t.db.rollback()
             raise
+        removed = reopening.costs_deleted
+        for cost, credit in reopening.credits_removed:
+            was, now = audit_entry(cost, credit, applied=False)
+            record(
+                t.db,
+                t.org_id,
+                actor_user_id=p.user_id,
+                action=COST_CREDIT_REMOVED,
+                entity_type="cost",
+                entity_id=cost.id,
+                before=was,
+                after=now,
+            )
     else:
         invoice.status = InvoiceStatus.NEEDS_REVIEW
     record(
@@ -412,7 +479,7 @@ def reopen(invoice_id: UUID, t: TenantDep, p: WriterDep) -> schemas.InvoiceRespo
     )
     t.db.commit()
     t.db.refresh(invoice)
-    return _response(invoice)
+    return _response(t.db, invoice)
 
 
 @router.post("/{invoice_id}/reject", response_model=schemas.InvoiceResponse)
@@ -435,7 +502,7 @@ def reject(invoice_id: UUID, t: TenantDep, p: WriterDep) -> schemas.InvoiceRespo
     )
     t.db.commit()
     t.db.refresh(invoice)
-    return _response(invoice)
+    return _response(t.db, invoice)
 
 
 @router.post("/{invoice_id}/retry", response_model=schemas.InvoiceResponse)
@@ -458,4 +525,4 @@ def retry(invoice_id: UUID, t: TenantDep, _: WriterDep) -> schemas.InvoiceRespon
     )
     t.db.commit()
     t.db.refresh(invoice)
-    return _response(invoice)
+    return _response(t.db, invoice)

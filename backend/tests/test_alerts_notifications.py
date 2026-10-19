@@ -75,7 +75,7 @@ def test_one_digest_per_organization_not_one_per_alert(
     (notification,) = notifier.sent
     assert len(notification.alerts) == 3
     assert notification.recipients == ["pierre@example.test"]
-    assert notification.subject == "FreightSight : 3 alertes"  # French by default
+    assert notification.subject == "FreightSight\u00a0: 3 alertes"  # French by default
     assert "demurrage risk HIGH" in notification.text()  # no payload: the stored words stand
 
     # nothing left to say on the next round
@@ -92,7 +92,7 @@ def test_a_single_alert_keeps_its_own_title(client: TestClient, db: Session, org
     make_alerts(db, org, 1)
     notifier = RecordingNotifier()
     handlers.dispatch_alerts(db, notifier=notifier)
-    assert notifier.sent[0].subject == "FreightSight : MSCU4821990: demurrage risk HIGH"
+    assert notifier.sent[0].subject == "FreightSight\u00a0: MSCU4821990: demurrage risk HIGH"
 
 
 # ---------------------------------------------------------------------------- the reader's language
@@ -127,8 +127,8 @@ def test_the_digest_is_written_in_the_language_of_the_organization(
     handlers.dispatch_alerts(db, notifier=notifier)
 
     body = notifier.sent[0].text()
-    assert notifier.sent[0].subject == "FreightSight : MSCU4821990 : risque de surestaries élevé"
-    assert "[Critique] MSCU4821990 : risque de surestaries élevé" in body
+    assert notifier.sent[0].subject == "FreightSight\u00a0: MSCU4821990\u00a0: risque de surestaries élevé"
+    assert "[Critique] MSCU4821990\u00a0: risque de surestaries élevé" in body
     assert "Dernier jour franc le 20/09/2026" in body
     assert "Ouvrez FreightSight" in body
     assert "demurrage" not in body

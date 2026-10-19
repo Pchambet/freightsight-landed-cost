@@ -56,7 +56,8 @@ def no_rate(client: TestClient, db: Session) -> dict[str, Any]:
     assert client.post("/api/v1/costs", json=charge(box["id"], "OCEAN_FREIGHT", "400.00")).status_code == 201
     # What an import leaves when no rate can be had: the rate missing, never 1.
     usd = UUID(orders["USD"]["id"])
-    db.execute(update(PurchaseOrder).where(PurchaseOrder.id == usd).values(fx_rate=None, fx_date=None))
+    missing = {"fx_rate": None, "fx_date": None, "fx_source": None}
+    db.execute(update(PurchaseOrder).where(PurchaseOrder.id == usd).values(**missing))
     db.flush()
     return {"box": box["id"], "usd": orders["USD"]["id"]}
 
@@ -185,6 +186,24 @@ def test_a_month_holding_an_order_without_rate_is_not_closed(
     assert res.json()["code"] == "PERIOD_ORDERS_WITHOUT_FX_RATE"
     assert res.json()["params"] == {"orders": "PO-USD"}
     assert client.get(f"/api/v1/periods/{PERIOD}").json()["summary"]["status"] == "open"
+
+
+def test_a_closed_month_whose_order_has_lost_its_rate_says_why_its_gap_cannot_be_marked(
+    client: TestClient, db: Session, no_rate: dict[str, Any]
+) -> None:
+    """The close's refusal said the month "cannot be closed" — of a month closed already."""
+    usd = UUID(no_rate["usd"])
+    db.execute(update(PurchaseOrder).where(PurchaseOrder.id == usd).values(fx_rate=Decimal("0.92")))
+    db.flush()
+    assert client.post(f"/api/v1/periods/{PERIOD}/close").status_code == 201
+    db.execute(update(PurchaseOrder).where(PurchaseOrder.id == usd).values(fx_rate=None))
+    db.flush()
+    res = client.post(f"/api/v1/periods/{PERIOD}/acknowledge-drift", json={})
+    assert res.status_code == 422, res.text
+    assert (res.json()["code"], res.json()["params"]) == (
+        "PERIOD_DRIFT_ORDERS_WITHOUT_FX_RATE",
+        {"orders": "PO-USD"},
+    )
 
 
 def test_the_audit_gives_no_margin_or_coefficient_built_on_a_missing_value(

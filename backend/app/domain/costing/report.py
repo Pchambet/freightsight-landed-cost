@@ -10,8 +10,14 @@ from uuid import UUID
 from app.core.money import q2, q4
 from app.domain.costing import engine
 from app.domain.costing.engine import EXCLUDED_FROM_LANDED
-from app.domain.costing.service import Computation, charged_containers, to_engine_cost
-from app.domain.costing.value import FX_RATE_MISSING, missing_code, total
+from app.domain.costing.service import (
+    Computation,
+    charged_containers,
+    held_containers,
+    held_orders,
+    to_engine_cost,
+)
+from app.domain.costing.value import FX_RATE_MISSING, coefficient, missing_code, total
 from app.domain.models import Cost, CostStatus
 
 ZERO = Decimal("0.00")
@@ -54,6 +60,10 @@ class LineReport:
     #: Its container carries no charge at all (see `charged_containers`): `landed` is only the FOB,
     #: and the screens show no landed cost for it.
     without_charge: bool = False
+    #: Of those, a container whose charges are entered but could not be placed (`held_containers`):
+    #: not one "with no charge", and `held_orders` names the orders with no rate that hold them.
+    charges_held: bool = False
+    held_orders: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -89,10 +99,15 @@ class Report:
     """
 
     base_currency: str
-    #: None, with `landed`, while one of the lines has no value (see `costing.value`).
+    #: Every line's goods, charged or not: a fact. None while one of the lines has no value (see
+    #: `costing.value`).
     fob: Decimal | None
     allocated: Decimal
     vat: Decimal
+    #: The landed cost of the lines whose container carries a charge (`charged_containers`), and the
+    #: value of their goods: a container with none would only add its FOB, so it is left out of both
+    #: and counted in `containers_without_charge`. None when none of the lines' containers carries a
+    #: charge, and while one of the charged lines has no value.
     landed: Decimal | None
     unallocated: Decimal
     #: Still only expected: live estimates no invoice has replaced yet.
@@ -118,6 +133,17 @@ class Report:
     replaced: list[tuple[Cost, Cost]] = field(default_factory=list)
     fob_missing: str | None = None
     fob_missing_lines: int = 0
+    charged_fob: Decimal | None = None
+    #: landed / charged_fob, four decimals.
+    coefficient: Decimal | None = None
+    containers_without_charge: int = 0
+    #: Of `containers_without_charge`, those whose charges are entered but held, and the orders whose
+    #: missing rate holds them (`held_containers`).
+    containers_held: int = 0
+    held_orders: list[str] = field(default_factory=list)
+    #: The invoiced part of `unallocated`, import VAT excluded: invoiced all the same, so the strip
+    #: that says what was invoiced counts it, as not placed.
+    unallocated_actual: Decimal = ZERO
 
 
 def estimate_allocations(comp: Computation) -> dict[UUID, dict[UUID, Decimal]]:
@@ -181,6 +207,7 @@ def _report(comp: Computation, base_currency: str, load_filter: set[UUID], cost_
         detail[estimate.cost_type.value].estimated = detail[estimate.cost_type.value].estimated + scoped
 
     charged = charged_containers(comp)
+    held = held_containers(comp)
     lines: list[LineReport] = []
     for ld in comp.loads:
         if ld.id not in load_filter:
@@ -214,6 +241,8 @@ def _report(comp: Computation, base_currency: str, load_filter: set[UUID], cost_
                 by_cost_type=by_ct,
                 fob_missing=None if ld.value_known else FX_RATE_MISSING,
                 without_charge=ld.container_id not in charged,
+                charges_held=ld.container_id in held,
+                held_orders=list(held.get(ld.container_id, ())),
             )
         )
 
@@ -225,6 +254,7 @@ def _report(comp: Computation, base_currency: str, load_filter: set[UUID], cost_
     costs = [comp.cost_rows[cid] for cid in cost_filter if cid in comp.cost_rows]
     costs.sort(key=lambda c: (c.cost_date, c.cost_type.value, str(c.id)))
     warnings = []
+    unallocated_actual = ZERO
     for u in comp.result.unallocated:
         if u.cost_id not in cost_filter:
             continue
@@ -232,8 +262,16 @@ def _report(comp: Computation, base_currency: str, load_filter: set[UUID], cost_
         labels = [_load_label(comp, lid) for lid in u.load_ids if lid in comp.load_rows]
         if labels:
             message = f"{message}: {', '.join(labels)}"
-        amount = comp.cost_rows[u.cost_id].amount_base
+        cost = comp.cost_rows[u.cost_id]
+        amount = cost.amount_base
         warnings.append(Warning_(u.cost_id, u.code, message, amount, list(u.load_ids), labels))
+        # Invoiced or expected on this scope even though it could not be placed: the strip's count of
+        # the cost types billed must not read "nothing expected" over six invoices on file.
+        column = "estimated" if cost.status is CostStatus.ESTIMATE else "actual"
+        split = detail[cost.cost_type.value]
+        setattr(split, column, getattr(split, column) + amount)
+        if column == "actual" and cost.cost_type.value not in EXCLUDED_FROM_LANDED:
+            unallocated_actual += amount
     notes = []
     for n in comp.result.notes:
         if n.cost_id not in cost_filter:
@@ -246,6 +284,11 @@ def _report(comp: Computation, base_currency: str, load_filter: set[UUID], cost_
     fob = total(ln.fob for ln in lines)
     missing = sum(1 for ln in lines if ln.fob_missing)
     allocated_total = sum((ln.allocated for ln in lines), ZERO)
+    charged_lines = [ln for ln in lines if not ln.without_charge]
+    charged_fob = None if lines and not charged_lines else total(ln.fob for ln in charged_lines)
+    landed = (
+        None if charged_fob is None else q2(charged_fob + sum((ln.allocated for ln in charged_lines), ZERO))
+    )
     vat_total = sum((ln.vat for ln in lines), ZERO)
     actual_total = sum((ln.actual for ln in lines), ZERO)
     return Report(
@@ -253,7 +296,7 @@ def _report(comp: Computation, base_currency: str, load_filter: set[UUID], cost_
         fob=None if fob is None else q2(fob),
         allocated=q2(allocated_total),
         vat=q2(vat_total),
-        landed=None if fob is None else q2(fob + allocated_total),
+        landed=landed,
         unallocated=q2(sum((w.amount_base for w in warnings), ZERO)),
         estimated=q2(sum((ln.estimated for ln in lines), ZERO)),
         actual=q2(actual_total),
@@ -277,6 +320,12 @@ def _report(comp: Computation, base_currency: str, load_filter: set[UUID], cost_
         replaced=replaced,
         fob_missing=missing_code(missing),
         fob_missing_lines=missing,
+        charged_fob=None if charged_fob is None else q2(charged_fob),
+        coefficient=coefficient(landed, charged_fob),
+        containers_without_charge=len({ln.container_id for ln in lines if ln.without_charge}),
+        containers_held=len({ln.container_id for ln in lines if ln.charges_held}),
+        held_orders=held_orders(held, {ln.container_id for ln in lines}),
+        unallocated_actual=q2(unallocated_actual),
     )
 
 
@@ -352,4 +401,8 @@ def purchase_order_report(comp: Computation, base_currency: str, po_id: UUID) ->
     line_ids = {ld.po_line_id for ld in comp.loads if ld.po_id == po_id}
     costs = {c.id for c in comp.cost_rows.values() if c.po_id == po_id or c.po_line_id in line_ids}
     costs |= {a.cost_id for a in comp.result.allocations if a.load_id in loads}  # what reached its lines
+    # And what its lines hold back: a container's invoice spread on value that this order's missing
+    # rate keeps from being placed. Left out, the order read "nothing invoiced" and asked for the
+    # invoice a second time, when the next step is its rate.
+    costs |= {u.cost_id for u in comp.result.unallocated if loads.intersection(u.load_ids)}
     return _report(comp, base_currency, loads, costs)

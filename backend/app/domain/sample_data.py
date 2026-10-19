@@ -179,6 +179,7 @@ def seed_sample_data(db: Session, org: Organization) -> SampleData:
         supplier_id=tyres.id,
         currency=currency,
         fx_rate=Decimal("1"),
+        fx_source="same",
         incoterm=Incoterm.FOB,
         order_date=today - timedelta(days=75),
     )
@@ -202,6 +203,7 @@ def seed_sample_data(db: Session, org: Organization) -> SampleData:
         supplier_id=mats.id,
         currency=currency,
         fx_rate=Decimal("1"),
+        fx_source="same",
         incoterm=Incoterm.FOB,
         order_date=today - timedelta(days=68),
     )

@@ -35,6 +35,9 @@ FIELDS: dict[ImportKind, tuple[Field, ...]] = {
         Field("po_number", "N° commande", "PO number", required=True),
         Field("supplier_name", "Fournisseur", "Supplier"),
         Field("currency", "Devise", "Currency"),
+        # What one unit of the order's currency is worth in the books' currency: a currency the ECB
+        # does not quote, or the bank's own rate. Without it, the ECB rate of the order date.
+        Field("fx_rate", "Taux de change", "Exchange rate"),
         Field("order_date", "Date de commande", "Order date"),
         Field("incoterm", "Incoterm", "Incoterm"),
         Field("line_no", "N° ligne", "Line number"),

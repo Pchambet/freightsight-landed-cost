@@ -64,7 +64,8 @@ def _load_rows(db: Session, org_id: UUID) -> list[ContainerLoad]:
 
 
 def _cost_rows(db: Session, org_id: UUID) -> list[Cost]:
-    return list(db.scalars(select(Cost).where(Cost.org_id == org_id)))
+    # The credits come along: a report lists each cost with what was refunded on it.
+    return list(db.scalars(select(Cost).where(Cost.org_id == org_id).options(selectinload(Cost.credits))))
 
 
 def live_and_superseded(rows: list[Cost]) -> tuple[list[Cost], list[tuple[Cost, Cost]]]:
@@ -169,6 +170,48 @@ def charged_containers(comp: Computation) -> set[UUID]:
         for a in comp.result.allocations
         if a.amount_base and comp.cost_rows[a.cost_id].cost_type.value not in engine.EXCLUDED_FROM_LANDED
     }
+
+
+#: Which field of a load a cost's scope names: what a cost reaches, as the engine reads it.
+_SCOPE_FIELD = {
+    "SHIPMENT": "shipment_id",
+    "CONTAINER": "container_id",
+    "PO": "po_id",
+    "PO_LINE": "po_line_id",
+}
+
+
+def held_containers(comp: Computation) -> dict[UUID, tuple[str, ...]]:
+    """The containers left out by `charged_containers` that a charge WAS entered for: one the engine
+    could not place, most often because it is spread on value and an order has no exchange rate.
+
+    Such a box is not one "with no charge": its forwarder's invoice is on file, and a screen saying
+    otherwise invites a person to enter it a second time. It stays out of every landed figure all the
+    same — nothing reaches its lines — and each such figure names it apart, with the numbers of the
+    orders whose missing rate holds its charges (empty when something else does, a missing weight say).
+    """
+    charged = charged_containers(comp)
+    costs = {cost.id: cost for cost in comp.costs}
+    held: dict[UUID, set[str]] = {}
+    for item in comp.result.unallocated:
+        if comp.cost_rows[item.cost_id].cost_type.value in engine.EXCLUDED_FROM_LANDED:
+            continue
+        cost = costs[item.cost_id]
+        field_name = _SCOPE_FIELD[cost.scope]
+        boxes = {ld.container_id for ld in comp.loads if getattr(ld, field_name) == cost.target_id} - charged
+        orders = (
+            {comp.load_rows[lid].po_line.purchase_order.po_number for lid in item.load_ids}
+            if item.code == "MISSING_FX_RATE"
+            else set()
+        )
+        for box in boxes:
+            held.setdefault(box, set()).update(orders)
+    return {box: tuple(sorted(orders)) for box, orders in held.items()}
+
+
+def held_orders(held: dict[UUID, tuple[str, ...]], boxes: set[UUID]) -> list[str]:
+    """The orders whose missing rate holds the charges of these containers, by number."""
+    return sorted({order for box in boxes & held.keys() for order in held[box]})
 
 
 def recompute_org(db: Session, org: Organization) -> Computation:

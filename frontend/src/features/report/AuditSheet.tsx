@@ -245,7 +245,7 @@ export default async function AuditSheet({ audit, header, locale }: { audit: Aud
                   <tbody className="divide-y divide-slate-100">
                     {audit.margins.map((m) => (
                       <tr key={m.sku} className="print:break-inside-avoid">
-                        <td className={tdc}><span className="font-mono">{m.sku}</span>{m.description ? <div className="text-xs text-slate-500">{m.description}</div> : null}{m.fob_missing ? <div className="text-xs text-amber-800">{tv("line")}</div> : null}<WithoutChargeLine count={m.containers_without_charge ?? 0} /></td>
+                        <td className={tdc}><span className="font-mono">{m.sku}</span>{m.description ? <div className="text-xs text-slate-500">{m.description}</div> : null}{m.fob_missing ? <div className="text-xs text-amber-800">{tv("line")}</div> : null}<WithoutChargeLine of={m} /></td>
                         <td className={`${tdc} text-right tabular-nums text-slate-600`}>{qty(m.quantity, locale)}</td>
                         <td className={`${tdc} text-right tabular-nums text-slate-600`}>{eur(m.unit_fob)}</td>
                         <td className={`${tdc} text-right tabular-nums`}>{eur(m.unit_landed)}</td>
@@ -346,7 +346,7 @@ export default async function AuditSheet({ audit, header, locale }: { audit: Aud
                     <tbody className="divide-y divide-slate-100">
                       {rows.map((r) => (
                         <tr key={r.key}>
-                          <td className={tdc}>{kind === "month" ? (r.key === "unknown" ? t("coefficient.noDate") : monthTitle(r.key, locale)) : r.key === "unknown" ? t("coefficient.noSupplier") : r.label}{r.fob_missing ? <div className="text-xs text-amber-800">{tv("line")}</div> : null}<WithoutChargeLine count={r.containers_without_charge ?? 0} /></td>
+                          <td className={tdc}>{kind === "month" ? (r.key === "unknown" ? t("coefficient.noDate") : monthTitle(r.key, locale)) : r.key === "unknown" ? t("coefficient.noSupplier") : r.label}{r.fob_missing ? <div className="text-xs text-amber-800">{tv("line")}</div> : null}<WithoutChargeLine of={r} /></td>
                           <td className={`${tdc} text-right tabular-nums text-slate-600`}>{eur(r.fob)}</td>
                           <td className={`${tdc} text-right tabular-nums text-slate-600`}>{eur(r.landed)}</td>
                           <td className={`${tdc} text-right tabular-nums font-semibold whitespace-nowrap`}>
@@ -374,7 +374,9 @@ export default async function AuditSheet({ audit, header, locale }: { audit: Aud
               <div className="flex justify-between gap-3"><dt className="text-slate-600">{t("quality.containers")}</dt><dd className="tabular-nums font-medium">{c.containers}</dd></div>
               <div className="flex justify-between gap-3"><dt className="text-slate-600">{t("quality.landed")}</dt><dd className="tabular-nums font-medium">{eur(c.landed)}</dd></div>
               <div className="flex justify-between gap-3"><dt className="text-slate-600">{t("quality.estimated")}</dt><dd className="tabular-nums font-medium">{eur(c.estimated)}{c.estimated_share_pct != null ? <span className="text-slate-500 font-normal"> ({pct1(c.estimated_share_pct)})</span> : null}</dd></div>
-              <div className="flex justify-between gap-3"><dt className="text-slate-600">{t("quality.withoutCost")}</dt><dd className="tabular-nums font-medium">{c.containers_without_cost}</dd></div>
+              {/* A box whose charges are on file but held is not one "with no cost": counted apart. */}
+              <div className="flex justify-between gap-3"><dt className="text-slate-600">{t("quality.withoutCost")}</dt><dd className="tabular-nums font-medium">{c.containers_without_cost - (c.containers_held ?? 0)}</dd></div>
+              {c.containers_held ? <div className="flex justify-between gap-3"><dt className="text-slate-600">{t("quality.held")}</dt><dd className="tabular-nums font-medium">{c.containers_held}</dd></div> : null}
               <div className="flex justify-between gap-3"><dt className="text-slate-600">{t("quality.toReview")}</dt><dd className="tabular-nums font-medium">{c.invoices_to_review}</dd></div>
               {c.containers_not_compared != null ? (
                 <div className="flex justify-between gap-3"><dt className="text-slate-600">{t("quality.notCompared")}</dt><dd className="tabular-nums font-medium">{c.containers_not_compared}</dd></div>

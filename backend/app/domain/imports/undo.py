@@ -81,6 +81,15 @@ def undo(t: TenantSession, job: ImportJob, *, synced: bool) -> tuple[list[UUID],
             import_ids=[str(later.id) for later in relying],
             files=[later.original_filename or "" for later in relying],
         )
+    credited = [credit for cost in costs for credit in cost.credits]
+    if credited:
+        # Deleting the cost would take its refunds with it, out of the history and off the credit note
+        # that took them: they are taken back first, as for a cost deleted by hand.
+        raise Unprocessable(
+            "A credit has reduced some of these costs; take the credits back first",
+            code="COST_HAS_CREDITS",
+            params={"credit_number": credited[0].credit_number or "", "count": str(len(credited))},
+        )
     pushed = _live_pushes_carrying(t.db, t.org, costs)
     if pushed:
         raise Unprocessable(

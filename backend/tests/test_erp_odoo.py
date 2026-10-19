@@ -21,7 +21,7 @@ from app.adapters.erp.odoo import OdooConnector
 from app.core.crypto import CryptoError
 from app.core.tenancy import set_current_org
 from app.domain.erp.ports import ErpAuthError, ErpProtocolError, ErpUnavailable
-from app.domain.erp.service import open_key, seal_key, to_csv
+from app.domain.erp.service import _merged, open_key, seal_key, to_csv
 from app.domain.models import ErpConnection, ErpSyncRun, Organization
 
 FIXTURE = json.loads((Path(__file__).parent / "fixtures" / "odoo" / "purchase_orders.json").read_text())
@@ -453,6 +453,77 @@ def test_a_sync_imports_the_orders_and_is_idempotent(
     assert all(run["status"] == "SUCCEEDED" for run in runs)
 
 
+def test_a_sync_larger_than_one_import_file_goes_through_in_several(
+    client: TestClient, db: Session, org: Organization, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A first sync reads the whole history, and an Odoo with years of orders holds more lines than a
+    file a person may upload. Refused by that cap, the run failed, the watermark never moved and every
+    night read everything again to fail again: no order ever arrived. The sync goes in files that fit,
+    each order whole in one of them; a person's file is still held to the cap."""
+    from app.domain.imports import parsing
+
+    connect(client, FakeOdoo(), monkeypatch)
+    monkeypatch.setattr(parsing, "MAX_ROWS", 3)  # a header and two lines per file
+
+    res = client.post("/api/v1/erp/sync")
+    assert res.status_code == 202, res.text
+    run = res.json()
+    assert run["status"] == "SUCCEEDED"
+    assert (run["purchase_orders"], run["lines"]) == (3, 5)
+    assert run["detail"]["lines_created"] == 5
+    assert len(run["detail"]["import_job_ids"]) == 3
+    orders = client.get("/api/v1/purchase-orders").json()
+    assert sorted(o["po_number"] for o in orders) == ["P00008", "P00009", "P00010"]
+
+    content, _ = to_csv(connector(FakeOdoo()).fetch_purchase_orders())
+    with pytest.raises(parsing.ImportError_):
+        parsing.parse_table(content, "orders.csv")
+
+
+def test_every_file_of_a_sync_in_several_is_listed_as_the_sync(
+    client: TestClient, db: Session, org: Organization, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The run names its first file, and all of them in its detail: the later ones are the sync's
+    too, never an "odoo-sync.csv" a person seems to have dropped by hand."""
+    from app.domain.imports import parsing
+
+    connect(client, FakeOdoo(), monkeypatch)
+    monkeypatch.setattr(parsing, "MAX_ROWS", 3)
+    run = client.post("/api/v1/erp/sync").json()
+
+    jobs = run["detail"]["import_job_ids"]
+    sources = {job["id"]: job["source"] for job in client.get("/api/v1/imports").json()}
+    assert {job_id: sources.get(job_id) for job_id in jobs} == {job_id: "erp_sync" for job_id in jobs}
+    assert client.get(f"/api/v1/imports/{jobs[-1]}").json()["source"] == "erp_sync"
+
+
+def test_the_nightly_sync_leaves_one_entry_in_the_history(
+    client: TestClient, db: Session, org: Organization, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Orders that came in at night are in the history like a file a person imported, under no one's
+    name: one entry for the run, whatever number of files it took, counted as the run counted them."""
+    from app.domain.imports import parsing
+    from app.jobs import handlers
+
+    connect(client, FakeOdoo(), monkeypatch)
+    monkeypatch.setattr(parsing, "MAX_ROWS", 3)
+    assert handlers.sync_erp(db, org.id) == 1
+
+    run = db.scalars(select(ErpSyncRun).where(ErpSyncRun.org_id == org.id)).one()
+    (entry,) = client.get("/api/v1/audit-log", params={"action": "import.committed"}).json()["entries"]
+    assert (entry["actor_user_id"], entry["entity_type"]) == (None, "import")
+    assert entry["entity_id"] == str(run.import_job_id)
+    assert entry["after"] == {
+        "kind": "PURCHASE_ORDERS",
+        "file_name": "odoo-sync.csv",
+        "rows": 5,
+        "valid_rows": 5,
+        "refused": 0,
+        "lines_created": 5,
+        "lines_updated": 0,
+    }
+
+
 def test_a_failed_sync_leaves_a_run_that_says_why(
     client: TestClient, db: Session, org: Organization, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -696,3 +767,13 @@ def test_a_full_sync_re_reads_everything(
     assert forced.status_code == 202
     assert write_date_filter(odoo.domains[-1]) is None
     assert forced.json()["detail"]["since"] is None
+
+
+def test_a_sync_read_in_several_files_names_every_order_left_without_a_rate() -> None:
+    """Each file of a long sync says which of its orders have no rate; the run's report names them all,
+    not only those of the first file."""
+    first = {"row_count": 2, "errors": [], "warnings": [], "orders_without_rate": ["P00012"]}
+    second = {"row_count": 3, "errors": [], "warnings": [], "orders_without_rate": ["P00031", "P00012"]}
+    merged = _merged([first, second], [uuid.uuid4(), uuid.uuid4()])
+    assert merged["orders_without_rate"] == ["P00012", "P00031"]
+    assert merged["row_count"] == 5

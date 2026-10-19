@@ -4,6 +4,8 @@ export type Formatters = {
   field: (key: string) => string;
   invoiceStatus: (code: string) => string;
   costCount: (count: number) => string;
+  /** The credits a confirmed credit note recorded, counted. */
+  creditCount: (count: number) => string;
   money: (amount: string) => string;
   rate: (amount: string) => string;
   costType: (code: string) => string;
@@ -33,16 +35,16 @@ export type Formatters = {
   label: (id: string) => string | undefined;
 };
 
-const DATE_KEYS = new Set(["fx_date", "cost_date", "invoice_date", "last_free_day"]);
+const DATE_KEYS = new Set(["fx_date", "cost_date", "invoice_date", "last_free_day", "credit_date"]);
 const DATE_TIME_KEYS = new Set(["closed_at", "created_at", "occurred_at", "forgotten_at", "expires_at"]);
-const MONEY_KEYS = new Set(["total_amount", "amount", "amount_base", "fob", "landed", "acknowledged_drift"]);
+const MONEY_KEYS = new Set(["total_amount", "amount", "amount_base", "fob", "landed", "acknowledged_drift", "credited", "difference", "held"]);
 /** Ids that name nothing a person can open (a share link's row, a push's row): a hash on screen, never information. */
-const HIDDEN_KEYS = new Set(["share_id", "push_id"]);
+const HIDDEN_KEYS = new Set(["share_id", "push_id", "cost_id"]);
 /** Settings are one JSON column; each one that moved is a change of its own, not a blob. */
 const NESTED_KEYS = new Set(["settings"]);
 /** Text a person typed or a system named (an invoice "2026.0412", a vendor, a note, a file "2026-09-30"): shown
  * as written, never re-read as a decimal or a date — "2026,0412" would be another invoice. */
-const VERBATIM_KEYS = new Set(["invoice_number", "vendor", "odoo_name", "note", "close_reason", "forgotten_reason", "code", "name", "voyage", "vessel_name", "location_name", "file_name"]);
+const VERBATIM_KEYS = new Set(["invoice_number", "vendor", "credit_number", "credit_vendor", "odoo_name", "note", "close_reason", "forgotten_reason", "code", "name", "voyage", "vessel_name", "location_name", "file_name", "hs_code"]);
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const ISO_DATE_TIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
@@ -83,12 +85,17 @@ function formatValue(key: string, v: unknown, f: Formatters): string {
   if (key === "status" && typeof val === "string") return f.invoiceStatus(val);
   // The costs a confirmation or an import wrote, a reopening or an undo deleted: counted, never listed.
   if ((key === "cost_ids" || key === "costs_deleted") && Array.isArray(val)) return f.costCount(val.length);
+  if (key === "credit_ids" && Array.isArray(val)) return val.length ? f.creditCount(val.length) : "—";
   if (key === "kind" && typeof val === "string") return f.importKind(val);
   // What a person overruled to confirm an invoice: whole sentences, one after the other.
   if (key === "notes" && Array.isArray(val) && val.length > 0 && val.every((n) => typeof n === "string")) return val.map((n) => f.invoiceNote(n)).join(" ");
   if (key === "quantity" && (typeof val === "string" || typeof val === "number")) return f.quantity(String(val));
   if (MONEY_KEYS.has(key) && (typeof val === "string" || typeof val === "number")) return f.money(String(val));
   if (key === "fx_rate" && (typeof val === "string" || typeof val === "number")) return f.rate(String(val));
+  // A rate card's price is a sum, a percentage of FOB or a duty rate, as its basis says: a figure, never money.
+  if (key === "price" && (typeof val === "string" || typeof val === "number")) return f.rate(String(val));
+  // Its basis is named among the history's field labels, so the entry needs no formatter of its own.
+  if (key === "basis" && typeof val === "string") return f.field(`rateBasis.${val}`);
   if (key === "cost_type" && typeof val === "string") return f.costType(val);
   if (key === "allocation_method" && typeof val === "string") return f.method(val);
   if (key === "scope" && typeof val === "string") return f.scope(val);
@@ -166,9 +173,9 @@ export function auditEntityRef(
     const num = payload.invoice_number;
     if (typeof num === "string" && num) return `${entityLabel(entityType)} ${num}`;
   }
-  // A cost has no number of its own: what names it is its type, which the payload still carries
-  // after the cost itself is gone.
-  if (entityType === "cost" && typeof payload.cost_type === "string") return `${entityLabel(entityType)} · ${f.costType(payload.cost_type)}`;
+  // A cost, or a rate card, has no number of its own: what names it is its type, which the payload
+  // still carries after the cost or the card itself is gone.
+  if ((entityType === "cost" || entityType === "rate_card") && typeof payload.cost_type === "string") return `${entityLabel(entityType)} · ${f.costType(payload.cost_type)}`;
   const known = entityId ? f.label(entityId) : undefined;
   return known ? `${entityLabel(entityType)} ${known}` : entityLabel(entityType);
 }

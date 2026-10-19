@@ -48,7 +48,7 @@ def alert(
 def test_the_demurrage_alert_counts_the_days_left_in_both_languages() -> None:
     a = alert(AlertKind.DND_RISK, {"risk": "HIGH", "last_free_day": "2026-09-13"})
     title, body = alert_text(a, "fr", container_number="MSCU4821990", now=NOW)
-    assert title == "MSCU4821990 : risque de surestaries élevé"
+    assert title == "MSCU4821990\u00a0: risque de surestaries élevé"
     assert body == "Dernier jour franc le 13/09/2026, 1 jour restant."
 
     title, body = alert_text(a, "en", container_number="MSCU4821990", now=NOW)
@@ -67,7 +67,7 @@ def test_the_last_free_day_today_is_zero_days_left_not_a_missing_sentence() -> N
 def test_demurrage_already_running_says_so_rather_than_counting_backwards() -> None:
     a = alert(AlertKind.DND_RISK, {"risk": "INCURRING", "last_free_day": "2026-09-01"})
     assert alert_text(a, "fr", container_number="C", now=NOW) == (
-        "C : surestaries en cours",
+        "C\u00a0: surestaries en cours",
         "Le dernier jour franc était le 01/09/2026. Les surestaries courent.",
     )
 
@@ -87,7 +87,7 @@ def test_an_eta_that_moved_is_read_in_utc_whoever_reads_it() -> None:
         },
     )
     assert alert_text(a, "fr", container_number="MSCU4821990", now=NOW) == (
-        "MSCU4821990 : arrivée décalée de 18 h plus tard",
+        "MSCU4821990\u00a0: arrivée décalée de 18 h plus tard",
         "Nouvelle ETA 20/09/2026 06:30, au lieu de 19/09/2026 12:30.",
     )
     title, body = alert_text(a, "en", container_number="MSCU4821990", now=NOW)
@@ -98,7 +98,7 @@ def test_an_eta_that_moved_is_read_in_utc_whoever_reads_it() -> None:
 def test_an_eta_given_in_another_time_zone_is_shown_in_utc() -> None:
     a = alert(AlertKind.ETA_CHANGED, {"delta_hours": -6, "eta": "2026-09-20T08:30:00+02:00"})
     assert alert_text(a, "fr", container_number="C", now=NOW) == (
-        "C : arrivée décalée de 6 h plus tôt",
+        "C\u00a0: arrivée décalée de 6 h plus tôt",
         "Nouvelle ETA 20/09/2026 06:30.",
     )
 
@@ -125,7 +125,7 @@ def test_a_delivery_we_gave_up_on_says_when_it_arrived_and_how_often_we_tried() 
         {"provider": "shipsgo", "attempts": 5, "received_at": "2026-09-12T08:05:00+00:00"},
     )
     title, body = alert_text(a, "fr", container_number="MSCU4821990", now=NOW)
-    assert title == "MSCU4821990 : une mise à jour de suivi n'a pas pu être traitée"
+    assert title == "MSCU4821990\u00a0: une mise à jour de suivi n'a pas pu être traitée"
     assert body.startswith("shipsgo a envoyé une mise à jour le 12/09/2026 08:05")
     assert "après 5 tentatives" in body
     assert "rien n'est perdu" in body

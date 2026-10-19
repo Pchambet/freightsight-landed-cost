@@ -9,8 +9,31 @@ import { dateShort, dateTimeShort, decimalDisplay, money, qty, rate } from "@/li
 
 type Json = Record<string, unknown> | null | undefined;
 
+/** Amounts in the organization's own currency, whatever the record. */
+const BASE_AMOUNTS = new Set(["amount_base", "fob", "landed", "acknowledged_drift"]);
+/** Amounts in the record's own currency (a cost's, an invoice's, the credit on a cost): its `currency`. */
+const OWN_AMOUNTS = new Set(["amount", "credited", "total_amount"]);
+const PLAIN_DECIMAL = /^-?\d+(\.\d+)?$/;
+
+/**
+ * Every amount of a record written with the currency it is in. The history used to print each one in
+ * euros, so a credit on a cost invoiced in dollars read as euros. A record that does not say its
+ * currency gets the figure without a symbol rather than a guessed one.
+ */
+function priced(record: Json, base: string, locale: string): Json {
+  if (!record) return record;
+  const own = typeof record.currency === "string" && record.currency ? record.currency : null;
+  const out: Record<string, unknown> = { ...record };
+  for (const [key, value] of Object.entries(record)) {
+    if ((typeof value !== "string" && typeof value !== "number") || !PLAIN_DECIMAL.test(String(value))) continue;
+    if (BASE_AMOUNTS.has(key)) out[key] = money(String(value), base, locale);
+    else if (OWN_AMOUNTS.has(key)) out[key] = own ? money(String(value), own, locale) : decimalDisplay(String(value), locale);
+  }
+  return out;
+}
+
 export async function AuditEntries({ entries, labels }: { entries: AuditEntry[]; labels?: Record<string, string> }) {
-  const [t, action, costType, method, scope, milestone, erpDocumentState, fxSource, importKind, noteT, locale] = await Promise.all([
+  const [t, action, costType, method, scope, milestone, erpDocumentState, fxSource, importKind, noteT, locale, org] = await Promise.all([
     getTranslations("audit"),
     getTranslations("domain.auditAction"),
     getTranslations("domain.costType"),
@@ -22,14 +45,18 @@ export async function AuditEntries({ entries, labels }: { entries: AuditEntry[];
     getTranslations("imports.kind"),
     getTranslations("invoices.lineNotes"),
     getLocale(),
+    api.GET("/api/v1/organization"),
   ]);
+  const base = org.data?.base_currency ?? null;
   // A generic fallback for a field name or enum value this table has no label for yet: never the
   // raw key or the raw enum member.
   const formatters: Formatters = {
     field: (key: string) => (t.has(`fields.${key}`) ? t(`fields.${key}`) : t("otherField")),
     invoiceStatus: (code: string) => (t.has(`invoiceStatus.${code}`) ? t(`invoiceStatus.${code}`) : t("unknownValue")),
     costCount: (count: number) => t("costCount", { count }),
-    money: (amount: string) => money(amount, "EUR", locale),
+    creditCount: (count: number) => t("creditCount", { count }),
+    // Amounts arrive already written in their currency (`priced`); a bare figure keeps no symbol.
+    money: (amount: string) => (PLAIN_DECIMAL.test(amount) ? decimalDisplay(amount, locale) : amount),
     rate: (amount: string) => rate(amount, locale),
     costType: (code: string) => (costType.has(code as never) ? costType(code as never) : t("unknownValue")),
     method: (code: string) => (method.has(code as never) ? method(code as never) : t("unknownValue")),
@@ -45,8 +72,8 @@ export async function AuditEntries({ entries, labels }: { entries: AuditEntry[];
     month: (key: string) => periodTitle(key, locale, true),
     decimal: (raw: string) => decimalDisplay(raw, locale),
     quantity: (raw: string) => qty(raw, locale),
-    // A forced duplicate names its own currency; EUR is only the fallback, as for the amounts above.
-    invoiceNote: (note: string) => formatInvoiceNote(note, (k, v) => noteT(k as never, v as never), (code) => formatters.costType(code), locale, "EUR"),
+    // A forced duplicate names its own currency; the organization's is only the fallback.
+    invoiceNote: (note: string) => formatInvoiceNote(note, (k, v) => noteT(k as never, v as never), (code) => formatters.costType(code), locale, base ?? ""),
     itemCount: (count: number) => t("itemCount", { count }),
     pair: (name: string, value: string) => t("pair", { name, value }),
     label: (id: string) => labels?.[id],
@@ -59,7 +86,8 @@ export async function AuditEntries({ entries, labels }: { entries: AuditEntry[];
         const key = e.action.replace(".", "_");
         // One field can mean two things: the costs an import wrote, the costs its undo deleted.
         const field = (name: string) => (t.has(`fieldsByAction.${key}.${name}`) ? t(`fieldsByAction.${key}.${name}`) : formatters.field(name));
-        const changes = auditDiff(e.before as Json, e.after as Json, { ...formatters, field });
+        const [before, after] = base ? [priced(e.before as Json, base, locale), priced(e.after as Json, base, locale)] : [e.before as Json, e.after as Json];
+        const changes = auditDiff(before, after, { ...formatters, field });
         const ref = auditEntityRef(e.entity_type, e.entity_id, e.before as Json, e.after as Json, entityLabel, formatters);
         return (
           <li key={e.id} className="px-5 py-3">

@@ -393,7 +393,7 @@ def _purchase_orders(
     for number, ((pair, supplier_key), articles) in enumerate(sorted(wanted.items()), start=101):
         currency = SUPPLIERS[supplier_key][2]
         ordered_on = today - timedelta(days=VOYAGES[pair * 2].arrived_days_ago + 70)
-        rate, rate_date, _ = rates.on(currency, ordered_on)
+        rate, rate_date, source = rates.on(currency, ordered_on)
         order = PurchaseOrder(
             org_id=org.id,
             po_number=f"PO-2026-{number}",
@@ -401,6 +401,7 @@ def _purchase_orders(
             currency=currency,
             fx_rate=rate,
             fx_date=rate_date,
+            fx_source=source,
             incoterm=Incoterm.FOB,
             order_date=ordered_on,
         )

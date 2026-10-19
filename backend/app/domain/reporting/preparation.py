@@ -30,6 +30,7 @@ from app.core.money import q2
 from app.domain.costing.engine import EXCLUDED_FROM_LANDED
 from app.domain.costing.entry import DUTY_GUARD, normalize_invoice_number, normalize_vendor
 from app.domain.costing.service import Computation
+from app.domain.fx.orders import rate_unconfirmed
 from app.domain.models import (
     AllocationMethod,
     Container,
@@ -78,6 +79,7 @@ Code = Literal[
     "SAME_INVOICE_TWICE",
     "CREDIT_NOTE_REVERSES_COST",
     "CREDIT_NOTES_SKIPPED",
+    "ORDERS_RATE_UNCONFIRMED",
     "PO_SPLIT",
     "LINES_WITHOUT_DUTY_RATE",
     "DUTY_GAP",
@@ -108,6 +110,7 @@ CHECKS: dict[Code, tuple[Severity, Section]] = {
     "SAME_INVOICE_TWICE": ("blocking", "margins"),
     "CREDIT_NOTE_REVERSES_COST": ("blocking", "margins"),
     "CREDIT_NOTES_SKIPPED": ("limits", "findings"),
+    "ORDERS_RATE_UNCONFIRMED": ("limits", "margins"),
     "PO_SPLIT": ("limits", "margins"),
     "LINES_WITHOUT_DUTY_RATE": ("limits", "margins"),
     "DUTY_GAP": ("limits", "margins"),
@@ -188,6 +191,7 @@ def audit_preparation(
         *period.without_fx_rate(),
         *period.double_entries(),
         *period.credit_notes(),
+        *period.rate_unconfirmed(),
         *period.po_split(),
         *period.lines_without_rate(),
         *period.duty_gap(),
@@ -549,6 +553,23 @@ class _Period:
             (Example("purchase_order", str(po.id), po.po_number) for po in examples),
         )
 
+    def rate_unconfirmed(self) -> list[Item]:
+        """Orders on the period's boxes still at the rate of 1 the import wrote when it had none
+        (`fx.orders.rate_unconfirmed`): their value may be dollars read as euros, which nothing here
+        can tell. Named, so a person confirms or sets each rate."""
+        orders = {
+            load.po_id: self.comp.pos[load.po_id]
+            for load in self.comp.loads
+            if load.container_id in self.boxes
+            and rate_unconfirmed(self.comp.pos[load.po_id], self.org.base_currency)
+        }
+        examples = sorted(orders.values(), key=lambda po: po.po_number)
+        return _item(
+            "ORDERS_RATE_UNCONFIRMED",
+            len(orders),
+            (Example("purchase_order", str(po.id), po.po_number) for po in examples),
+        )
+
     def double_entries(self) -> list[Item]:
         """One invoice recorded twice: the landed cost counts it twice until one copy goes."""
         pairs = _double_entries(self.comp, self.every, self.costs_in, documents_of(self.db, self.costs_in))
@@ -580,7 +601,8 @@ class _Period:
                     note.get("reverses_cost_id") and not notes[key][0].get("reverses_cost_id")
                 ):
                     notes[key] = (note, job)
-        reversing: list[tuple[dict[str, Any], Cost]] = []
+        # The refund, its cost, and the share of it still counted (base-currency amounts follow it).
+        reversing: list[tuple[dict[str, Any], Cost, Decimal]] = []
         plain: list[tuple[dict[str, Any], ImportJob]] = []
         for note, job in notes.values():
             if reversed_id := note.get("reverses_cost_id"):
@@ -590,15 +612,21 @@ class _Period:
                 if cost is not None and (
                     cost.id in self.costs_in or cost.container_id in self._arrived_empty()
                 ):
-                    reversing.append((note, cost))
+                    # Recorded since as credits on the very cost it reverses: applied as far as they go.
+                    refund = abs(Decimal(note["amount"]))
+                    credited = cost.credited if cost.currency == note["currency"] else Decimal(0)
+                    if credited < refund:
+                        reversing.append((note, cost, (refund - credited) / refund))
             elif self.period_from <= date.fromisoformat(note["cost_date"]) <= self.period_to:
                 plain.append((note, job))
         return [
             *_item(
                 "CREDIT_NOTE_REVERSES_COST",
                 len(reversing),
-                self._places((cost for _, cost in reversing), self._where_even_empty),
-                amount_base=sum((abs(Decimal(note["amount_base"])) for note, _ in reversing), Decimal(0)),
+                self._places((cost for _, cost, _ in reversing), self._where_even_empty),
+                amount_base=sum(
+                    (q2(abs(Decimal(note["amount_base"])) * left) for note, _, left in reversing), Decimal(0)
+                ),
             ),
             *_item(
                 "CREDIT_NOTES_SKIPPED",
