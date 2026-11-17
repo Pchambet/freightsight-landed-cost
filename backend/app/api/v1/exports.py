@@ -289,7 +289,7 @@ def costs_csv(
     about invoicing, not an error, so every row names the date its period was read against.
     """
     _, mark = dialect(locale)
-    stmt = t.q(Cost).order_by(Cost.cost_date, Cost.created_at)
+    stmt = t.q(Cost).options(selectinload(Cost.credits)).order_by(Cost.cost_date, Cost.created_at)
     if period_from:
         stmt = stmt.where(Cost.cost_date >= period_from)
     if period_to:
@@ -310,6 +310,12 @@ def costs_csv(
         "replaces_estimate",
         "unallocated_reason",
         "period_basis",
+        # `amount` is what the cost now amounts to, credits taken off. The invoice and its credit notes
+        # are three pieces in the accounts: what was invoiced, what was credited and under which
+        # numbers. At the end of the row, so that the columns already there keep their place.
+        "amount_invoiced",
+        "credited",
+        "credit_notes",
     ]
     # What could not be spread over any line, named on the piece it belongs to: a cost list whose
     # amounts silently never reach a landed cost is the other half of the same reconciliation.
@@ -351,6 +357,9 @@ def costs_csv(
                 str(cost.supersedes_cost_id) if cost.supersedes_cost_id else "",
                 unallocated[cost.id].message if cost.id in unallocated else "",
                 "cost_date",
+                number(cost.amount + cost.credited, mark),
+                number(cost.credited, mark),
+                ", ".join(credit.credit_number for credit in cost.credits if credit.credit_number),
             ]
 
     return csv_response(rows(), header, locale, "costs.csv")

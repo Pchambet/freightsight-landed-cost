@@ -37,6 +37,9 @@ export default function BreakdownBar({
   if (whole <= 0) return null;
   const dim = (k: CostFamily | "fob") => (active !== null && active !== k ? "opacity-40" : "");
   const last = present[present.length - 1];
+  // A grid item is as wide as its content unless told otherwise: without min-w-0 a long row pushed the
+  // amounts out of a narrow card. In the one-column card a long label wraps; on two columns it is cut.
+  const labelFit = dense ? "" : "truncate";
 
   return (
     <div>
@@ -62,29 +65,29 @@ export default function BreakdownBar({
 
       <ul className={`mt-3 grid gap-x-6 gap-y-1 text-sm ${dense ? "" : "sm:grid-cols-2"}`}>
         <li
-          className={`flex items-center gap-2 rounded px-1 -mx-1 transition-colors ${active === "fob" ? "bg-slate-100" : ""}`}
+          className={`flex min-w-0 items-center gap-2 rounded px-1 -mx-1 transition-colors ${active === "fob" ? "bg-slate-100" : ""}`}
           onPointerEnter={() => setActive("fob")}
           onPointerLeave={() => setActive(null)}
         >
           <span className="w-2.5 h-2.5 rounded-[3px] bg-viz-fob shrink-0" aria-hidden />
-          <span className="text-slate-600 flex-1 truncate">{fobLabel}</span>
-          <span className="font-medium text-slate-900 tabular-nums">{money(fob, currency, locale)}</span>
+          <span className={`text-slate-600 flex-1 min-w-0 ${labelFit}`}>{fobLabel}</span>
+          <span className="font-medium text-slate-900 tabular-nums whitespace-nowrap">{money(fob, currency, locale)}</span>
         </li>
         {present.map((f) => (
           <li
             key={f}
-            className={`flex items-center gap-2 rounded px-1 -mx-1 transition-colors ${active === f ? "bg-slate-100" : ""}`}
+            className={`flex min-w-0 items-center gap-2 rounded px-1 -mx-1 transition-colors ${active === f ? "bg-slate-100" : ""}`}
             onPointerEnter={() => setActive(f)}
             onPointerLeave={() => setActive(null)}
           >
             <span className={`w-2.5 h-2.5 rounded-[3px] shrink-0 ${FAMILY_BG[f]}`} aria-hidden />
-            <span className="text-slate-600 flex-1 truncate">{familyLabels[f]}</span>
+            <span className={`text-slate-600 flex-1 min-w-0 ${labelFit}`}>{familyLabels[f]}</span>
             {fob > 0 ? (
               <span className="text-xs text-slate-500 tabular-nums whitespace-nowrap">
                 {pct((families[f] / fob) * 100, locale)} {ofFobLabel}
               </span>
             ) : null}
-            <span className="font-medium text-slate-900 tabular-nums">{money(families[f], currency, locale)}</span>
+            <span className="font-medium text-slate-900 tabular-nums whitespace-nowrap">{money(families[f], currency, locale)}</span>
           </li>
         ))}
       </ul>

@@ -803,6 +803,32 @@ def recover_stalled_jobs(db: Session, *, scheduled: set[str]) -> tuple[int, int]
     return requeued, given_up
 
 
+#: How long a job that succeeded is kept. Long enough to answer « did last week's pass run? ».
+FINISHED_JOBS_KEPT_DAYS = 30
+
+
+def forget_finished_jobs(db: Session) -> int:
+    """Delete the jobs that succeeded more than `FINISHED_JOBS_KEPT_DAYS` days ago. Returns how many.
+
+    Every tick of every schedule leaves a job and its events: some 700 jobs a day that nothing ever
+    removed, in the table the worker reads at every fetch and the nightly backup carries. A job that
+    failed, or that was given up on, stays: it is the only trace of what went wrong, and there are
+    few of them. What ran and when is kept apart, in `job_runs`. Procrastinate's own query.
+    """
+    from procrastinate import sql
+
+    connection = db.connection().connection.driver_connection
+    assert connection is not None  # a checked-out connection always has its driver's
+    with connection.cursor() as cursor:
+        cursor.execute(
+            sql.queries["delete_old_jobs"],
+            {"statuses": ["succeeded"], "queue": None, "nb_hours": FINISHED_JOBS_KEPT_DAYS * 24},
+        )
+        forgotten: int = cursor.rowcount
+    db.commit()
+    return forgotten
+
+
 def _reading_abandoned(db: Session, args: dict[str, str]) -> None:
     org = db.get(Organization, UUID(args["org_id"]))
     if org is None:

@@ -434,6 +434,20 @@ export async function addRateCard(input: { cost_type: CostType; scope: "CONTAINE
   return { ok: true, data: null };
 }
 
+/** Change a card in place. Its cost type and scope are what identify it: those are not edited, a card for another type is another card. */
+export async function updateRateCard(cardId: string, input: { basis: RateBasis; amount: string; currency: string; hs_code: string; notes: string }): Promise<ActionResult<null>> {
+  await protectAction();
+  const amount = normalizeAmount(input.amount);
+  if (amount === null) return await fail(null, "rateCards.failed");
+  const { error } = await api.PATCH("/api/v1/organization/rate-cards/{card_id}", {
+    params: { path: { card_id: cardId } },
+    body: { basis: input.basis, amount, currency: input.currency.trim().toUpperCase(), hs_code: input.hs_code.trim() || null, notes: input.notes.trim() || null },
+  });
+  if (error) return await fail(error, "rateCards.failed");
+  revalidatePath("/settings");
+  return { ok: true, data: null };
+}
+
 export async function deleteRateCard(cardId: string): Promise<ActionResult<null>> {
   await protectAction();
   const { error } = await api.DELETE("/api/v1/organization/rate-cards/{card_id}", { params: { path: { card_id: cardId } } });

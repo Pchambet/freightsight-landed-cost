@@ -3,12 +3,12 @@
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useLocale, useTranslations } from "next-intl";
-import { Trash2 } from "lucide-react";
+import { Check, Pencil, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Card, btnSecondary, input, label, td, tdRight, th, thRight } from "@/components/layout/AppShell";
 import ConfirmDialog from "@/components/shared/ConfirmDialog";
 import { Money } from "@/components/shared/Money";
-import { addRateCard, deleteRateCard } from "@/features/actions";
+import { addRateCard, deleteRateCard, updateRateCard } from "@/features/actions";
 import type { RateCard } from "@/lib/api/client";
 import { COST_TYPES, RATE_BASES, type CostType, type RateBasis } from "@/lib/domain";
 import { money, pct } from "@/lib/format";
@@ -20,6 +20,15 @@ const EXAMPLE_RATE_CARDS: { cost_type: CostType; scope: "CONTAINER"; basis: Rate
   { cost_type: "DEMURRAGE", scope: "CONTAINER", basis: "FLAT", amount: "65.00" },
 ];
 
+type Draft = { id: string; basis: RateBasis; amount: string; currency: string; hs_code: string; notes: string };
+
+/** A stored price as a person types it: « 800.0000 » is 800,00 and « 2.7500 » is 2,75 in French. */
+function typed(amount: string, locale: string): string {
+  const [whole, digits = ""] = amount.split(".");
+  const kept = digits.replace(/0+$/, "").padEnd(2, "0");
+  return `${whole}${locale === "fr" ? "," : "."}${kept}`;
+}
+
 export default function RateCards({ cards, currency }: { cards: RateCard[]; currency: string }) {
   const t = useTranslations("rateCards");
   const typeLabel = useTranslations("domain.costType");
@@ -27,6 +36,9 @@ export default function RateCards({ cards, currency }: { cards: RateCard[]; curr
   const locale = useLocale();
   const [pending, start] = useTransition();
   const [toDelete, setToDelete] = useState<RateCard | null>(null);
+  // One card at a time is open for editing, in its own row: the amounts of the example cards are
+  // meant to be replaced by the importer's own, and deleting then re-adding a card was the only way.
+  const [draft, setDraft] = useState<Draft | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
   const lastTriggerRef = useRef<HTMLButtonElement | null>(null);
   const router = useRouter();
@@ -58,6 +70,22 @@ export default function RateCards({ cards, currency }: { cards: RateCard[]; curr
       toast.success(t("deleted"));
       router.refresh();
     });
+  const edit = (c: RateCard) =>
+    setDraft({ id: c.id, basis: c.basis, amount: typed(c.amount, locale), currency: c.currency, hs_code: c.hs_code ?? "", notes: c.notes ?? "" });
+  const save = () => {
+    if (!draft) return;
+    start(async () => {
+      const r = await updateRateCard(draft.id, draft);
+      if (!r.ok) return void toast.error(r.error);
+      toast.success(t("updated"));
+      setDraft(null);
+      router.refresh();
+    });
+  };
+  const onKey = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter") { e.preventDefault(); save(); }
+    if (e.key === "Escape") setDraft(null);
+  };
   const addExamples = () =>
     start(async () => {
       for (const example of EXAMPLE_RATE_CARDS) {
@@ -86,7 +114,27 @@ export default function RateCards({ cards, currency }: { cards: RateCard[]; curr
                   <button type="button" onClick={addExamples} disabled={pending} className={`${btnSecondary} mt-3`}>{t("example")}</button>
                 </td>
               </tr>
-            ) : cards.map((c) => (
+            ) : cards.map((c) => draft?.id === c.id ? (
+              <tr key={c.id} className="bg-slate-50" onKeyDown={onKey}>
+                <td className={td}>{typeLabel(c.cost_type)}</td>
+                <td className={`${td} text-slate-600`}>{scopeLabel(c.scope)}</td>
+                <td className={td}><select aria-label={t("basis")} className={`${input} min-w-32`} value={draft.basis} onChange={(e) => setDraft({ ...draft, basis: e.target.value as RateBasis })}>{RATE_BASES.map((b) => <option key={b} value={b}>{t(`basisLabel.${b}`)}</option>)}</select></td>
+                <td className={td}>
+                  <div className="flex justify-end gap-2">
+                    <input aria-label={t("amount")} autoFocus inputMode="decimal" className={`${input} w-28 text-right tabular-nums`} value={draft.amount} onChange={(e) => setDraft({ ...draft, amount: e.target.value })} />
+                    <input aria-label={t("currency")} maxLength={3} className={`${input} w-16 font-mono uppercase`} value={draft.currency} onChange={(e) => setDraft({ ...draft, currency: e.target.value })} />
+                  </div>
+                </td>
+                <td className={td}><input aria-label={t("hsCode")} maxLength={12} className={`${input} w-32 font-mono`} value={draft.hs_code} onChange={(e) => setDraft({ ...draft, hs_code: e.target.value })} /></td>
+                <td className={td}><input aria-label={t("notes")} className={`${input} min-w-40 text-xs`} value={draft.notes} onChange={(e) => setDraft({ ...draft, notes: e.target.value })} /></td>
+                <td className={tdRight}>
+                  <div className="flex justify-end gap-3">
+                    <button type="button" onClick={save} disabled={pending} className="text-slate-700 hover:text-emerald-700" aria-label={t("save")} title={t("save")}><Check className="w-4 h-4" /></button>
+                    <button type="button" onClick={() => setDraft(null)} disabled={pending} className="text-slate-500 hover:text-slate-900" aria-label={t("cancel")} title={t("cancel")}><X className="w-4 h-4" /></button>
+                  </div>
+                </td>
+              </tr>
+            ) : (
               <tr key={c.id}>
                 <td className={td}>{typeLabel(c.cost_type)}</td>
                 <td className={`${td} text-slate-600`}>{scopeLabel(c.scope)}</td>
@@ -94,7 +142,12 @@ export default function RateCards({ cards, currency }: { cards: RateCard[]; curr
                 <td className={tdRight}>{c.basis === "PCT_OF_FOB" ? amountLabel(c) : <Money amount={c.amount} currency={c.currency} />}</td>
                 <td className={`${td} font-mono text-slate-600`}>{c.hs_code ?? "—"}</td>
                 <td className={`${td} text-slate-500 text-xs`}>{c.notes ?? ""}</td>
-                <td className={tdRight}><button type="button" onClick={(e) => { lastTriggerRef.current = e.currentTarget; setToDelete(c); }} disabled={pending} className="text-slate-500 hover:text-red-600" aria-label={t("deleteConfirmConfirm")}><Trash2 className="w-4 h-4" /></button></td>
+                <td className={tdRight}>
+                  <div className="flex justify-end gap-3">
+                    <button type="button" onClick={() => edit(c)} disabled={pending} className="text-slate-500 hover:text-slate-900" aria-label={t("edit")} title={t("edit")}><Pencil className="w-4 h-4" /></button>
+                    <button type="button" onClick={(e) => { lastTriggerRef.current = e.currentTarget; setToDelete(c); }} disabled={pending} className="text-slate-500 hover:text-red-600" aria-label={t("deleteConfirmConfirm")} title={t("deleteConfirmConfirm")}><Trash2 className="w-4 h-4" /></button>
+                  </div>
+                </td>
               </tr>
             ))}
           </tbody>

@@ -5061,6 +5061,11 @@ export interface components {
              * @default []
              */
             load_labels: string[];
+            /**
+             * Shared
+             * @default false
+             */
+            shared: boolean;
         };
         /**
          * SampleDataDeleted

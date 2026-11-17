@@ -43,7 +43,9 @@ def test_a_rate_typed_by_hand_survives_an_edit_of_the_order(client: TestClient, 
     # The day of the rate moved: the ECB's of the new day is taken, and the log says so.
     res = client.patch(f"/api/v1/purchase-orders/{po['id']}", json={"fx_date": "2026-08-20"})
     assert Decimal(res.json()["fx_rate"]) == Decimal("0.92")
-    entries = list(db.scalars(select(AuditLog).where(AuditLog.action == "purchase_order.updated")))
+    # In the order they were written: without it the database returns them as it pleases, and did.
+    logged = select(AuditLog).where(AuditLog.action == "purchase_order.updated").order_by(AuditLog.at)
+    entries = list(db.scalars(logged))
     assert [e.after for e in entries] == [
         {"order_date": "2026-08-20"},
         {"fx_rate": "0.92", "fx_date": "2026-08-20", "fx_source": "ecb"},

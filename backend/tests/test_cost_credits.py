@@ -6,6 +6,8 @@ enter it by hand: a cost cannot be negative. A refund never lowered a landed cos
 
 from __future__ import annotations
 
+import csv
+import io
 import uuid
 from decimal import Decimal
 from typing import Any
@@ -204,6 +206,40 @@ def test_the_same_credit_note_twice_on_one_cost_is_refused(client: TestClient, b
     res = credit(client, freight["id"], "100.00", number="av 0412")
     assert (res.status_code, res.json()["code"]) == (422, "CREDIT_ALREADY_RECORDED")
     assert res.json()["params"] == {"credit_number": "av 0412"}
+
+
+def test_the_cost_list_gives_what_was_invoiced_and_what_each_credit_note_took_off(
+    client: TestClient, box: str
+) -> None:
+    """An accountant holds an invoice of 3 000 and two credit notes: a row reading 2 500 with nothing
+    else matches none of the three pieces. The net stays where it was, and what was invoiced, what was
+    credited and under which numbers follow it."""
+    freight = charge(client, box)
+    charge(client, box, "380.00", cost_type="THC", number="FA-2026-0913")
+    assert credit(client, freight["id"], "400.00").status_code == 201
+    assert credit(client, freight["id"], "100.00", "AV-2").status_code == 201
+    res = client.get("/api/v1/exports/costs.csv", params={"locale": "en"})
+    header, *rows = csv.reader(io.StringIO(res.content.decode("utf-8").lstrip("\ufeff")))
+    by_invoice = {row["invoice_number"]: row for row in (dict(zip(header, r, strict=True)) for r in rows)}
+    credited = by_invoice["FA-2026-0912"]
+    assert (credited["amount"], credited["amount_invoiced"], credited["credited"]) == (
+        "2500.00",
+        "3000.00",
+        "500.00",
+    )
+    assert credited["credit_notes"] == "AV-1, AV-2" and credited["amount_base"] == "2500.00"
+    plain = by_invoice["FA-2026-0913"]
+    assert (plain["amount"], plain["amount_invoiced"], plain["credited"], plain["credit_notes"]) == (
+        "380.00",
+        "380.00",
+        "0.00",
+        "",
+    )
+    # Added at the end: a sheet built on the columns that were there keeps reading the same ones.
+    assert header[-3:] == ["amount_invoiced", "credited", "credit_notes"]
+
+    french = client.get("/api/v1/exports/costs.csv", params={"locale": "fr"}).content.decode("utf-8")
+    assert french.splitlines()[0].endswith(";Montant facturé;Avoirs;N° d'avoir")
 
 
 def test_a_credited_cost_keeps_its_net_amount_until_its_credits_are_taken_back(

@@ -589,6 +589,8 @@ class ReportWarning(BaseModel):
     # "PO-2026-101 #1 SKU" per affected load, so the UI can compose a translated sentence
     # instead of parsing `message`.
     load_labels: list[str] = []
+    # The amount is the whole cost, which also covers lines outside this report: not this scope's share.
+    shared: bool = False
 
 
 class ReportNote(BaseModel):

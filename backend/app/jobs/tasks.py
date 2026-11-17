@@ -124,6 +124,18 @@ def recover_stalled_jobs(timestamp: int) -> None:
         logger.warning("stalled jobs: %s re-queued, %s given up", requeued, given_up)
 
 
+@app.periodic(cron="10 4 * * *")
+@app.task(name="ops.forget_finished_jobs", queueing_lock="ops:forget_finished_jobs")
+def forget_finished_jobs(timestamp: int) -> None:
+    """Drop the jobs that succeeded a month ago: the queue is not an archive.
+
+    No retry: tomorrow's pass deletes whatever today's did not.
+    """
+    with handlers.session() as db:
+        forgotten = handlers.forget_finished_jobs(db)
+    logger.info("forgot %s finished jobs", forgotten)
+
+
 @app.periodic(cron="45 4 * * *")
 @app.task(
     name="ops.check_backup_freshness",

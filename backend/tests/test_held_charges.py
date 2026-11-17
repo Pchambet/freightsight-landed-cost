@@ -112,6 +112,27 @@ def test_the_order_with_no_rate_counts_the_charges_its_rate_holds(
     assert eur["warnings"] == [] and eur["totals"]["invoiced"] == "0.00"
 
 
+def test_a_held_invoice_says_when_it_also_covers_lines_the_page_does_not_show(
+    client: TestClient, db: Session, held: dict[str, Any]
+) -> None:
+    """The 525 € are the box's whole invoices, and 18 of its 28 tables belong to the order in euros:
+    read on the order with no rate, the amount is not that order's share, and the page must be able to
+    say so. Read on the box itself, or on an order alone in its box, it is exactly what is held."""
+    order_page = client.get(f"/api/v1/landed-costs/purchase-orders/{held['vnd']}").json()
+    assert [w["shared"] for w in order_page["warnings"]] == [True, True]
+    box_page = client.get(f"/api/v1/landed-costs/containers/{held['box']}").json()
+    assert [w["shared"] for w in box_page["warnings"]] == [False, False]
+
+    alone = order(client, "PO-SOLO", "USD", "TAB", "4")
+    solo = landed_box(client, "TGHU9900112", [(alone, "4")])
+    assert client.post("/api/v1/costs", json=charge(solo, "THC", "90.00")).status_code == 201
+    missing = {"fx_rate": None, "fx_date": None, "fx_source": None}
+    db.execute(update(PurchaseOrder).where(PurchaseOrder.id == UUID(alone["id"])).values(**missing))
+    db.flush()
+    page = client.get(f"/api/v1/landed-costs/purchase-orders/{alone['id']}").json()
+    assert [(w["amount_base"], w["shared"]) for w in page["warnings"]] == [("90.00", False)]
+
+
 def test_the_goods_left_out_are_given_at_their_known_value_with_the_orders_to_rate(
     client: TestClient, held: dict[str, Any]
 ) -> None:

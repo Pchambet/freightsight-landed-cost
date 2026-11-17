@@ -187,7 +187,8 @@ _SCOPE_KEY = {"SHIPMENT": "shipment_id", "CONTAINER": "container_id", "PO": "po_
 _CHILD_KEY = {"container": "container_id", "po": "po_id", "po_line": "po_line_id"}
 
 
-def _targets(cost: Cost, loads: list[Load]) -> list[Load]:
+def covered_loads(cost: Cost, loads: list[Load]) -> list[Load]:
+    """The lines a cost covers under its scope, placed or not."""
     key = _SCOPE_KEY[cost.scope]
     return [ld for ld in loads if getattr(ld, key) == cost.target_id]
 
@@ -280,7 +281,7 @@ def allocate(
     pass2 = [c for c in costs if c.method in DUTY_LIKE_METHODS]
 
     def run(cost: Cost) -> None:
-        targets = _targets(cost, sorted_loads)
+        targets = covered_loads(cost, sorted_loads)
         zero_basis: list[UUID] = []
         try:
             if not targets:

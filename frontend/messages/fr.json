@@ -1508,6 +1508,11 @@
       "basis": "Base de calcul",
       "price": "Prix du barème",
       "hs_code": "Code SH",
+      "trackingProvider": {
+        "manual": "Manuel",
+        "terminal49": "Terminal49",
+        "shipsgo": "Shipsgo"
+      },
       "rateBasis": {
         "FLAT": "Forfait",
         "PER_100KG": "Par 100 kg",
@@ -1604,6 +1609,10 @@
     "add": "Ajouter le barème",
     "added": "Barème ajouté",
     "deleted": "Barème supprimé",
+    "edit": "Modifier le barème",
+    "save": "Enregistrer le barème",
+    "cancel": "Annuler la modification",
+    "updated": "Barème modifié",
     "failed": "Impossible d'enregistrer le barème",
     "deleteConfirmTitle": "Supprimer ce barème ?",
     "deleteConfirmBody": "{type} · {amount}. Les coûts déjà estimés avec ce barème ne sont pas modifiés.",
@@ -2900,6 +2909,6 @@
   },
   "unallocated": {
     "held": "{count, plural, one {Coût non ventilé : {costs}.} other {# coûts non ventilés : {costs}.}}",
-    "whole": "Ces montants sont ceux des factures entières : une facture d'expédition ou de commande y est comptée en entier, même si une part revient à d'autres conteneurs."
+    "whole": "Ces montants sont ceux des factures entières, qui couvrent aussi des lignes absentes de cette page (d'autres commandes ou d'autres conteneurs) : la part qui revient à cette page ne peut pas être calculée tant qu'elles ne sont pas ventilées."
   }
 }

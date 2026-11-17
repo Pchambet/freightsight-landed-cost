@@ -71,6 +71,8 @@ function parseValue(v: unknown): unknown {
   return v;
 }
 
+const TRACKING_PROVIDERS = new Set(["manual", "terminal49", "shipsgo"]);
+
 /**
  * A record's before/after is whatever the domain model held — raw enum members, decimal strings,
  * uuids, booleans. This is the one place that turns that back into what a DAF (or an auditor) reads:
@@ -96,6 +98,8 @@ function formatValue(key: string, v: unknown, f: Formatters): string {
   if (key === "price" && (typeof val === "string" || typeof val === "number")) return f.rate(String(val));
   // Its basis is named among the history's field labels, so the entry needs no formatter of its own.
   if (key === "basis" && typeof val === "string") return f.field(`rateBasis.${val}`);
+  // A tracking provider is stored as its code (« manual »), which the settings screen names.
+  if (key === "tracking_provider_default" && typeof val === "string" && TRACKING_PROVIDERS.has(val)) return f.field(`trackingProvider.${val}`);
   if (key === "cost_type" && typeof val === "string") return f.costType(val);
   if (key === "allocation_method" && typeof val === "string") return f.method(val);
   if (key === "scope" && typeof val === "string") return f.scope(val);

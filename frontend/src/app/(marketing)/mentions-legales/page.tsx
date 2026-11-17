@@ -42,7 +42,7 @@ export default function LegalNoticePage() {
           <div className="font-medium text-slate-900">{h.name}</div>
           <div className="text-sm text-slate-500">{h.role}</div>
           <div>{h.address}</div>
-          <div>Téléphone : {h.phone}</div>
+          {h.phone ? <div>Téléphone : {h.phone}</div> : <div>Contact : <a href={h.contact} className={prose.link}>{h.contact.replace("https://", "")}</a></div>}
           <div><a href={h.url} className={prose.link}>{h.url.replace("https://", "")}</a></div>
         </div>
       ))}

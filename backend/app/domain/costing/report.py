@@ -74,6 +74,10 @@ class Warning_:
     amount_base: Decimal
     load_ids: list[UUID] = field(default_factory=list)
     load_labels: list[str] = field(default_factory=list)
+    #: `amount_base` is the whole cost, and the cost also covers lines this report does not show (a
+    #: container's invoice read on one of its orders): the amount is then not this scope's share,
+    #: which nobody can compute while the cost is unplaced.
+    shared: bool = False
 
 
 @dataclass
@@ -255,6 +259,7 @@ def _report(comp: Computation, base_currency: str, load_filter: set[UUID], cost_
     costs.sort(key=lambda c: (c.cost_date, c.cost_type.value, str(c.id)))
     warnings = []
     unallocated_actual = ZERO
+    engine_costs = {cost.id: cost for cost in comp.costs}
     for u in comp.result.unallocated:
         if u.cost_id not in cost_filter:
             continue
@@ -264,7 +269,10 @@ def _report(comp: Computation, base_currency: str, load_filter: set[UUID], cost_
             message = f"{message}: {', '.join(labels)}"
         cost = comp.cost_rows[u.cost_id]
         amount = cost.amount_base
-        warnings.append(Warning_(u.cost_id, u.code, message, amount, list(u.load_ids), labels))
+        placed = engine_costs.get(u.cost_id)
+        covered = engine.covered_loads(placed, comp.loads) if placed else []
+        shared = any(ld.id not in load_filter for ld in covered)
+        warnings.append(Warning_(u.cost_id, u.code, message, amount, list(u.load_ids), labels, shared))
         # Invoiced or expected on this scope even though it could not be placed: the strip's count of
         # the cost types billed must not read "nothing expected" over six invoices on file.
         column = "estimated" if cost.status is CostStatus.ESTIMATE else "actual"

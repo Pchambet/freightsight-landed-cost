@@ -12,16 +12,16 @@ function mailto(subject: string, body?: string): string {
   return `mailto:${CONTACT_EMAIL}?${params.join("&")}`;
 }
 
-// Who publishes the site, as article 6-III of the LCEN requires it. Every field stays empty until the
-// owner has the facts (registration, address, phone): an empty field keeps /mentions-legales and /cgv
-// at 404 and out of the footer and the sitemap, rather than publishing a legal page with a hole in it.
+// Who publishes the site, as article 6-III of the LCEN requires it. A field emptied again takes
+// /mentions-legales and /cgv back to 404 and out of the footer and the sitemap, rather than publishing
+// a legal page with a hole in it.
 // What to fill, and from where, is listed in the owner's legal notes.
 const publisher = {
   // "Pierre Chambet" for an entrepreneur individuel, the company name for a société.
-  legalName: "",
+  legalName: "Pierre Chambet",
   // As it must read, capital included for a company: "Entrepreneur individuel (micro-entreprise)",
   // "SASU au capital de 1 000 €".
-  legalForm: "",
+  legalForm: "Entrepreneur individuel (EI)",
   siren: "",
   // Register and city for a company ("RCS Paris"); left empty for an entrepreneur individuel.
   registry: "",
@@ -29,23 +29,24 @@ const publisher = {
   vatNumber: "",
   address: "",
   phone: "",
-  publicationDirector: "",
+  publicationDirector: "Pierre Chambet",
   email: CONTACT_EMAIL,
 };
 
 // Who stores what the site serves: the pages (Vercel) and the application's data (Railway). Names and
 // addresses as each publishes them in its own legal pages (sources in the owner's legal notes). Neither
-// publishes a phone number there, and the LCEN asks for one: the owner asks each for it.
+// publishes a phone number: the page gives the contact each one publishes instead, never a number
+// copied from a third party, and takes a phone the day one of them gives it.
 const hosts = [
-  { name: "Vercel Inc.", role: "Hébergement du site et de l'interface", address: "440 N Barranca Avenue #4133, Covina, CA 91723, États-Unis", phone: "", url: "https://vercel.com" },
-  { name: "Railway Corporation", role: "Hébergement de l'API et de la base de données (région Amsterdam, Pays-Bas)", address: "548 Market St PMB 68956, San Francisco, CA 94104, États-Unis", phone: "", url: "https://railway.com" },
+  { name: "Vercel Inc.", role: "Hébergement du site et de l'interface", address: "440 N Barranca Avenue #4133, Covina, CA 91723, États-Unis", phone: "", contact: "https://vercel.com/contact", url: "https://vercel.com" },
+  { name: "Railway Corporation", role: "Hébergement de l'API et de la base de données (région Amsterdam, Pays-Bas)", address: "548 Market St PMB 68956, San Francisco, CA 94104, États-Unis", phone: "", contact: "https://help.railway.com", url: "https://railway.com" },
 ];
 
 // The publisher exists as a registered business: a name, a form, a SIREN and an address.
 const registered = Boolean(publisher.legalName && publisher.legalForm && publisher.siren && publisher.address);
 // Everything the LCEN asks of the legal notice is known.
 const legalNoticeComplete =
-  registered && Boolean(publisher.phone && publisher.publicationDirector) && hosts.every((h) => h.name && h.address && h.phone);
+  registered && Boolean(publisher.phone && publisher.publicationDirector) && hosts.every((h) => h.name && h.address && (h.phone || h.contact));
 // The date from which the owner, having read the terms' reasoning and the /cgv page, applies them
 // (e.g. "1er décembre 2026"). Empty: no terms are published, whatever the identity fields say.
 const termsEffectiveDate = "";

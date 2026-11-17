@@ -84,15 +84,19 @@ def test_a_container_onboarded_past_its_last_free_day_is_alerted_immediately(
 ) -> None:
     """The onboarding scenario, and the one that used to be completely silent.
 
-    A box discharged at Le Havre on the 10th with five free days is already incurring on the 17th.
+    A box discharged at Le Havre a week ago with five free days is already incurring today.
     `refresh` wrote INCURRING and said nothing; the next morning's pass compared INCURRING with
     INCURRING, found no change, and moved on — for ever. The customer saw a red badge if they
     happened to look, and got no e-mail about the only box costing them money that day.
     """
     container_id = make_container(client)
+    # A week before the day the test runs, not a date: the route reads the real clock, and a fixed
+    # discharge ages past REMIND_UNTIL_DAYS, where the reminder rightly stops (this test went red
+    # on 14 November 2026 with a discharge dated 10 September).
+    discharged = datetime.now(UTC) - timedelta(days=7)
     res = client.post(
         f"/api/v1/containers/{container_id}/events",
-        json={"code": "DISCHARGED", "occurred_at": "2026-09-10T08:00:00Z"},
+        json={"code": "DISCHARGED", "occurred_at": discharged.isoformat()},
     )
     assert res.status_code == 201, res.text
 
