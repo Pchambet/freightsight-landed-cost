@@ -70,10 +70,24 @@ test("the policy a security questionnaire asks about, a new nonce on every reque
 });
 
 test("Next's and Clerk's script tags carry this response's nonce", async ({ page }) => {
+  // Every script tag is noted as it enters the document, the parser's and the ones added later. The
+  // request to Clerk is aborted here (offline run) and Clerk then takes its tag out again: reading the
+  // document once, afterwards, found no Clerk tag about one run in four.
+  await page.addInitScript(() => {
+    const seen: { src: string; nonce: string }[] = [];
+    (window as unknown as { __scripts: typeof seen }).__scripts = seen;
+    new MutationObserver((records) => {
+      for (const record of records)
+        for (const node of record.addedNodes) if (node instanceof HTMLScriptElement) seen.push({ src: node.src, nonce: node.nonce ?? "" });
+    }).observe(document, { childList: true, subtree: true });
+  });
+  const inserted = () => page.evaluate(() => (window as unknown as { __scripts: { src: string; nonce: string }[] }).__scripts);
   const response = await page.goto("/sign-in");
   const nonce = response?.headers()["content-security-policy"].match(/'nonce-([^']+)'/)?.[1];
-  const scripts = await page.evaluate(() => [...document.querySelectorAll("script")].map((s) => ({ src: s.src, nonce: s.nonce })));
-  expect(scripts.some((s) => s.src.includes("clerk.example.com"))).toBe(true);
+  await expect.poll(async () => (await inserted()).some((s) => s.src.includes("clerk.example.com"))).toBe(true);
+  const scripts = await inserted();
+  expect(nonce).toBeTruthy();
+  expect(scripts.length).toBeGreaterThan(1);
   for (const s of scripts) expect(s.nonce, s.src || "inline script").toBe(nonce);
 });
 
