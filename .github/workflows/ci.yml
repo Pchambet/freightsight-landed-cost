@@ -4,14 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
-  # Weekly, with no push: an advisory published on Tuesday for a locked dependency surfaces by Monday
-  # instead of turning the next unrelated push red.
-  schedule:
-    - cron: "0 6 * * 1"
   workflow_dispatch:
 
 concurrency:
-  # The event is in the key so that a push to main does not cancel the weekly run, or the reverse.
+  # The event is in the key so that a push to main does not cancel a manual run, or the reverse.
   group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 

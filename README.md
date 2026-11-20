@@ -1,5 +1,9 @@
 # FreightSight
 
+> **This snapshot is frozen.** FreightSight is now developed in the open: the full repository, with its
+> complete history and its live CI, is **[github.com/Pchambet/FreightSight](https://github.com/Pchambet/FreightSight)**.
+> What follows is this snapshot's README as it stood on 17 November 2026.
+
 Landed cost per SKU for importers: every freight, port, customs and haulage charge allocated down to the
 purchase-order line, in Decimal, to the cent, with the method written on each cost.
 
@@ -10,10 +14,6 @@ purchase-order line, in Decimal, to the cent, with the method written on each co
 [![License](https://img.shields.io/badge/license-FSL--1.1--MIT-blue)](LICENSE)
 
 ![Unit landed cost of two SKUs from the same container under three allocation policies](docs/figures/worked-example.png)
-
-> This public repository is a squashed, source-available snapshot of a privately developed product
-> (FastAPI + PostgreSQL back end, Next.js front end). The development history lives in the private
-> repository. Status: pre-alpha, built and maintained by one person.
 
 ## TL;DR
 
